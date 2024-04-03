@@ -1,0 +1,38 @@
+.program neskben
+; monitor OUT2 for keyboard enable
+.wrap_target
+
+    wait 0 gpio 2 [5]
+    in pins, 1
+    push
+    wait 1 gpio 2 [5]
+    in pins, 1
+    push
+    
+.wrap
+
+.program neskbadv
+; monitor OUT1 for row/column advance
+.wrap_target
+
+    wait 0 gpio 1 [5]
+    in pins, 1
+    push
+    wait 1 gpio 1 [5]
+    in pins, 1
+    push
+    
+.wrap
+
+.program neskbrst
+; monitor OUT0 for row reset
+.wrap_target
+
+    wait 0 gpio 0 [5]
+    in pins, 1
+    push
+    wait 1 gpio 0 [5]
+    in pins, 1
+    push
+    
+.wrap
