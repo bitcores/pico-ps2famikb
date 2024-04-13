@@ -17,13 +17,13 @@
 
 // $4016 "out" from Famicom/NES, three consecutive pins
 #define NES_OUT 0
-// $4017 "data" lines, four (five?) consecutive pins
+// $4017 "data" lines, five consecutive pins
 #define NES_DATA 3
 
 // KBD data and clock inputs must be consecutive with
 // data in the lower position.
-#define DAT_GPIO 8 // PS/2 data
-#define CLK_GPIO 9 // PS/2 clock
+#define DAT_GPIO 14 // PS/2 data
+#define CLK_GPIO 15 // PS/2 clock
 
 static uint8_t keymatrix[] = {
     0, 0, 0, 0, 0, 0, 0, 0, // 0 0, 0 1
@@ -142,8 +142,8 @@ void nes_handler_thread() {
         output = 0; //  if keyboard is not enabled return 0
         if (enable > 0) {
             for (int i = (4 * select); i < (4 * select)+4; i++) {
-                output = output << 1;  //  five lines (D0 empty) move below
                 output += keymatrix[i];
+                output = output << 1;
             }
         } 
         ps2famikb_putkb(output);

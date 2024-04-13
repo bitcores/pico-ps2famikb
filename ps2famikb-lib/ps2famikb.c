@@ -65,15 +65,15 @@ void ps2famikb_init(uint pio, uint nesin_gpio, uint kbout_gpio) {
     // set up the NES output PIO on $4017
     kbout_pio = pio ? pio1 : pio0;
 
-    for (uint8_t i = kbout_gpio; i < kbout_gpio+4; i++) {
+    for (uint8_t i = kbout_gpio; i < kbout_gpio+5; i++) {
         pio_gpio_init(kbout_pio, i);
     }
  
     kbout_sm = pio_claim_unused_sm(kbout_pio, true);
     uint kboutos = pio_add_program(kbout_pio, &kbout_program);
-    pio_sm_set_consecutive_pindirs(kbout_pio, kbout_sm, kbout_gpio, 4, true);
+    pio_sm_set_consecutive_pindirs(kbout_pio, kbout_sm, kbout_gpio, 5, true);
     pio_sm_config kboutc = kbout_program_get_default_config(kboutos);
-    sm_config_set_out_pins(&kboutc, kbout_gpio, 4);
+    sm_config_set_out_pins(&kboutc, kbout_gpio, 5);
     sm_config_set_out_shift(&kboutc, true, false, 32);
     pio_sm_init(kbout_pio, kbout_sm, kboutos, &kboutc);
     pio_sm_set_enabled(kbout_pio, kbout_sm, true);
