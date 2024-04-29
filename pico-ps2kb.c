@@ -9,6 +9,7 @@
 
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
+#include "hardware/gpio.h"
 
 #include "ps2kbd.h"
 #include "stdinit.h"
@@ -17,14 +18,23 @@
 
 // $4016 "out" from Famicom/NES, three consecutive pins
 #define NES_OUT 0
-// $4017 "data" lines, five consecutive pins
-#define NES_DATA 3
+// $4017 OE $4017 strobe read
+#define NES_JOY2OE 3
+// $4017 "data" lines, four consecutive pins
+#define NES_DATA 4
 
 // KBD data and clock inputs must be consecutive with
 // data in the lower position.
-#define DAT_GPIO 14 // PS/2 data
-#define CLK_GPIO 15 // PS/2 clock
+#define DAT_GPIO 10 // PS/2 data
+#define CLK_GPIO 11 // PS/2 clock
 
+// keyboard mode select
+#define KB_MODE 12 
+
+#define MAX_BUFFER 16
+#define WORD_SIZE 4
+
+// keypress matrix for family basic mode
 static uint8_t keymatrix[] = {
     0, 0, 0, 0, 0, 0, 0, 0, // 0 0, 0 1
     0, 0, 0, 0, 0, 0, 0, 0, // 1 0, 1 1
@@ -36,7 +46,6 @@ static uint8_t keymatrix[] = {
     0, 0, 0, 0, 0, 0, 0, 0, // 7 0, 7 1
     0, 0, 0, 0, 0, 0, 0, 0  // 8 0, 8 1
 };
-
 static const uint8_t famikey[] = {
     KEY_RIGHTBRACE, KEY_LEFTBRACE, KEY_ENTER, KEY_F8, 
     KEY_END, KEY_YEN, KEY_RIGHTSHIFT, KEY_KATAKANAHIRAGANA,
@@ -58,7 +67,8 @@ static const uint8_t famikey[] = {
     KEY_INSERT, KEY_BACKSPACE, KEY_SPACE, KEY_DOWN
 };
 
-static const uint8_t norkeymap[] = {
+// == Japanese 106/109 Keyboard Layout ==============
+uint8_t jpn106nkm[] = {
     0x76, 0x05, 0x06, 0x04,
     0x0C, 0x03, 0x0B, 0x83,
     0x0A, 0x16, 0x1E, 0x26,
@@ -78,7 +88,7 @@ static const uint8_t norkeymap[] = {
     0x29, 0x0E, 0x5D,
     0x13, 0x6A
 };
-static const uint8_t norkeys[] = {
+static uint8_t jpn106nk[] = {
     KEY_ESC, KEY_F1, KEY_F2, KEY_F3, 
     KEY_F4, KEY_F5, KEY_F6, KEY_F7,
     KEY_F8, KEY_1, KEY_2, KEY_3,
@@ -98,15 +108,24 @@ static const uint8_t norkeys[] = {
     KEY_SPACE, KEY_GRAVE, KEY_BACKSLASH,
     KEY_KATAKANAHIRAGANA, KEY_YEN
 };
-
-static const uint8_t extkeymap[] = { 
+// -- Extended Keys (E0 prefix) -----------------
+static uint8_t jpn106ekm[] = { 
     0x68, 0x72, 0x74, 0x75,
     0x6C, 0x70, 0x71, 0x69 
 };
-static const uint8_t extkeys[] = {
+static uint8_t jpn106ek[] = {
     KEY_LEFT, KEY_DOWN, KEY_RIGHT, KEY_UP,
     KEY_HOME, KEY_INSERT, KEY_DELETE, KEY_END 
 };
+
+
+// FIFO buffer for keypresses for standard mode
+// buffer length will be relatively small because under standard operation
+// the NES is likely to be reading from the buffer very frequently
+static uint8_t bufferindex = 0;
+static uint8_t keybuffer[MAX_BUFFER];
+
+static bool isfamikbmode = true;
 
 static uint8_t extended;
 static uint8_t release = 1;  // use opposite state
@@ -116,50 +135,111 @@ static uint8_t select = 0;
 static uint8_t enable = 0;
 static uint8_t toggle = 0;
 
+static uint32_t kbword = 0;
+static uint32_t mseword = 0;
+
 
 void nes_handler_thread() {
 
-    ps2famikb_init(0, NES_OUT, NES_DATA);
+    ps2famikb_init(0, NES_OUT, NES_JOY2OE, NES_DATA, isfamikbmode);
 
-    for (;;) {
-        //  read the current $4016 ouput
-        uint8_t nesread = ps2famikb_readnes();
-        
-        enable = nesread & 4;
+    
+    if (isfamikbmode) {
+        for (;;) {
+            //  read the current $4016 ouput
+            uint8_t nesread = ps2famikb_readnes();
+            
+            enable = nesread & 4;
 
-        if ((nesread & 1) == 1) {  //  reset keyboard row 
-            select = 0;
-            toggle = 0;
-        } else if ((nesread & 2) != toggle) {   // increment keyboard row
-            toggle = nesread & 2;
-            select += 1;
-            if (select > 17) {  //  wrap back to first row
+            if ((nesread & 1) == 1) {  //  reset keyboard row 
                 select = 0;
-            }
-        } 
+                toggle = 0;
+            } else if ((nesread & 2) != toggle) {   // increment keyboard row
+                toggle = nesread & 2;
+                select += 1;
+                if (select > 17) {  //  wrap back to first row
+                    select = 0;
+                }
+            } 
 
-        //  set current output value on $4017
-        output = 0; //  if keyboard is not enabled return 0
-        if (enable > 0) {
-            for (int i = (4 * select); i < (4 * select)+4; i++) {
-                output += keymatrix[i];
-                output = output << 1;
+            //  set current output value on $4017
+            output = 0; //  if keyboard is not enabled return 0
+            if (enable > 0) {
+                for (int i = (4 * select); i < (4 * select)+4; i++) {
+                    output = output << 1;
+                    output += keymatrix[i];
+                }
+            } 
+            ps2famikb_putkb(output);
+        }
+
+    } else {
+
+        for (;;) {
+            // check for latch signal and latch the buffers
+            if (ps2famikb_chklatch()) {
+                kbword = 0xFFFFFFFF;
+                mseword = 0xFFFFFFFF;
+                // load the four oldest buffered values
+                for (int i = 0; i < WORD_SIZE; i++) {
+                    kbword = kbword << 8;
+                    kbword += keybuffer[i];
+                    //mseword = mseword << 8;
+                    //mseword += msebuffer[i];
+                }
+                int c = WORD_SIZE;
+                if (bufferindex < WORD_SIZE) {
+                    c = bufferindex;
+                }
+                for (int i = c; i < MAX_BUFFER; i++) {
+                    keybuffer[i-c] = keybuffer[i];
+                }
+                
+                bufferindex = bufferindex - c;
             }
-        } 
-        ps2famikb_putkb(output);
+
+            if (ps2famikb_chkstrobe()) {
+
+                //mseword = mseword << 1;
+                kbword = kbword << 1;
+                //joypad = joypad << 1;
+            }
+
+            uint32_t serialout = 0;
+            // push next mouse bit in
+            serialout += (mseword & 0x80000000) >> 30;
+            // push the next keyboard bit in
+            serialout += (kbword & 0x80000000) >> 31;
+
+            ps2famikb_putkb(serialout);
+
+        }
     }
+
 }
 
 int main() {
     set_sys_clock_khz(270000, true);
 
     //stdio_init();
+    //printf("PS/2 KDB example\n");
+    kbd_init(1, DAT_GPIO);
+
+    //  configure pico-ps2kb based on gpio
+    gpio_init(KB_MODE);
+    gpio_set_dir(KB_MODE, GPIO_IN);
+    gpio_pull_down(KB_MODE);
+    
+    //  set famikb mode if high
+    isfamikbmode = gpio_get(KB_MODE);
+
+    // prepare buffers
+    for (int i = 0; i < MAX_BUFFER; i++) {
+        keybuffer[i] = 0xFF;
+    }
 
     //  run the NES handler on seperate core
     multicore_launch_core1(nes_handler_thread);
-
-    //printf("PS/2 KDB example\n");
-    kbd_init(1, DAT_GPIO);
 
     //  everything should have initialized, turn on LED
     const uint LED_PIN = PICO_DEFAULT_LED_PIN;
@@ -181,29 +261,55 @@ int main() {
                 break;               // go back to start
             default:
                 if (extended) {  // if extended key, check the extkeymap
-                    for (uint8_t i = 0; i < sizeof(extkeymap); i++) {
-                        if (extkeymap[i] == code) {
-                            ascii = extkeys[i];
+                    for (uint8_t i = 0; i < sizeof(jpn106ekm); i++) {
+                        if (jpn106ekm[i] == code) {
+                            ascii = jpn106ek[i];
                             break;
                         }
                     }
                 } else {    // if not extended, check the norkeymap
-                    for (uint8_t i = 0; i < sizeof(norkeymap); i++) {
-                        if (norkeymap[i] == code) {
-                            ascii = norkeys[i];
+                    for (uint8_t i = 0; i < sizeof(jpn106nkm); i++) {
+                        if (jpn106nkm[i] == code) {
+                            ascii = jpn106nk[i];
                             break;
                         }
                     }
-                }   // update the status of the key
-                for (uint8_t i = 0; i < sizeof(famikey); i++) {
-                    if (famikey[i] == ascii) {
-                        keymatrix[i] = release;
-                        break;
+                }
+
+                if (isfamikbmode) {
+                    // update the status of the key
+                    for (uint8_t i = 0; i < sizeof(famikey); i++) {
+                        if (famikey[i] == ascii) {
+                            keymatrix[i] = release;
+                            break;
+                        }
+                    }
+                } else {
+                    // if the key is being released, add 0x80
+                    if (!release) {
+                        ascii += 0x80;
+                    }
+
+                    // bitwise NOT the ascii values into the buffer
+                    if ((bufferindex+1) == MAX_BUFFER) {
+                        for (int i = 1; i < MAX_BUFFER; i++) {
+                            keybuffer[i-1] = keybuffer[i];
+                        }
+                        keybuffer[bufferindex] = ~ascii;
+                    }
+                    else {
+                        keybuffer[bufferindex] = ~ascii;
+                        bufferindex++;
                     }
                 }
+
                 extended = 0;
                 release = 1;
                 break;
+        }
+
+        if (bufferindex >= MAX_BUFFER) {
+            bufferindex = MAX_BUFFER-1;
         }
 
     }

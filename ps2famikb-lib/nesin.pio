@@ -1,38 +1,27 @@
-.program neskben
+.program nesinprg
+; all three OUT pins use the same program
 ; monitor OUT2 for keyboard enable
-.wrap_target
-
-    wait 0 gpio 2 [5]
-    in pins, 1
-    push
-    wait 1 gpio 2 [5]
-    in pins, 1
-    push
-    
-.wrap
-
-.program neskbadv
 ; monitor OUT1 for row/column advance
-.wrap_target
-
-    wait 0 gpio 1 [5]
-    in pins, 1
-    push
-    wait 1 gpio 1 [5]
-    in pins, 1
-    push
-    
-.wrap
-
-.program neskbrst
 ; monitor OUT0 for row reset
 .wrap_target
 
-    wait 0 gpio 0 [5]
+    wait 0 pin 0 [5]
     in pins, 1
     push
-    wait 1 gpio 0 [5]
+    wait 1 pin 0 [5]
     in pins, 1
     push
+    
+.wrap
+
+.program nesoe
+; monitor joypad 2 OE to strobe output
+.wrap_target
+
+    wait 0 pin 0 [5]
+    nop [5]
+    wait 1 pin 0 [10]
+    in pins, 1
+    push   
     
 .wrap
