@@ -16,6 +16,8 @@
 #include "neskbdinter.h"
 #include "ps2famikb.h"
 
+#include "kblayout.c"
+
 // $4016 "out" from Famicom/NES, three consecutive pins
 #define NES_OUT 0
 // $4017 OE $4017 strobe read
@@ -28,8 +30,16 @@
 #define DAT_GPIO 10 // PS/2 data
 #define CLK_GPIO 11 // PS/2 clock
 
-// keyboard mode select
-#define KB_MODE 12 
+// mouse data and clock inputs must be consecutive with
+// data in the lower position.
+#define MSE_DAT_GPIO 12 // PS/2 data
+#define MSE_CLK_GPIO 13 // PS/2 clock
+
+// keyboard mode select (2 pins?)
+#define KB_MODE 14 
+
+// keyboard layout select (4 pins?)
+#define KB_LAYOUT 16
 
 #define MAX_BUFFER 16
 #define WORD_SIZE 4
@@ -49,7 +59,7 @@ static uint8_t keymatrix[] = {
 static const uint8_t famikey[] = {
     KEY_RIGHTBRACE, KEY_LEFTBRACE, KEY_ENTER, KEY_F8, 
     KEY_END, KEY_YEN, KEY_RIGHTSHIFT, KEY_KATAKANAHIRAGANA,
-    KEY_SEMICOLON, KEY_APOSTROPHE, KEY_GRAVE, KEY_F7,
+    KEY_SEMICOLON, KEY_APOSTROPHE, KEY_GRAVE, KEY_F7, // APOSTROPHE maps to COLON
     KEY_GRAVE, KEY_MINUS, KEY_SLASH, KEY_BACKSLASH,
     KEY_K, KEY_L, KEY_O, KEY_F6,
     KEY_0, KEY_P, KEY_COMMA, KEY_DOT,
@@ -67,57 +77,6 @@ static const uint8_t famikey[] = {
     KEY_INSERT, KEY_BACKSPACE, KEY_SPACE, KEY_DOWN
 };
 
-// == Japanese 106/109 Keyboard Layout ==============
-uint8_t jpn106nkm[] = {
-    0x76, 0x05, 0x06, 0x04,
-    0x0C, 0x03, 0x0B, 0x83,
-    0x0A, 0x16, 0x1E, 0x26,
-    0x25, 0x2E, 0x36, 0x3D,
-    0x3E, 0x46, 0x45, 0x4E,
-    0x66, 0x0D, 0x15,
-    0x1D, 0x24, 0x2D, 0x2C,
-    0x35, 0x3C, 0x43, 0x44,
-    0x4D, 0x5B, 0x5D,
-    0x1C, 0x1B, 0x23, 0x2B,
-    0x34, 0x33, 0x3B, 0x42,
-    0x4B, 0x4C, 0x52,
-    0x5A, 0x12, 0x1A,
-    0x22, 0x21, 0x2A, 0x32,
-    0x31, 0x3A, 0x41, 0x49,
-    0x4A, 0x59, 0x14,
-    0x29, 0x0E, 0x5D,
-    0x13, 0x6A
-};
-static uint8_t jpn106nk[] = {
-    KEY_ESC, KEY_F1, KEY_F2, KEY_F3, 
-    KEY_F4, KEY_F5, KEY_F6, KEY_F7,
-    KEY_F8, KEY_1, KEY_2, KEY_3,
-    KEY_4, KEY_5, KEY_6, KEY_7,
-    KEY_8, KEY_9, KEY_0, KEY_MINUS,
-    KEY_BACKSPACE, KEY_TAB, KEY_Q,
-    KEY_W, KEY_E, KEY_R, KEY_T, 
-    KEY_Y, KEY_U, KEY_I, KEY_O, 
-    KEY_P, KEY_LEFTBRACE, KEY_RIGHTBRACE,
-    KEY_A, KEY_S, KEY_D, KEY_F, 
-    KEY_G, KEY_H, KEY_J, KEY_K, 
-    KEY_L, KEY_SEMICOLON, KEY_APOSTROPHE,
-    KEY_ENTER, KEY_LEFTSHIFT, KEY_Z,
-    KEY_X, KEY_C, KEY_V, KEY_B, 
-    KEY_N, KEY_M, KEY_COMMA, KEY_DOT,
-    KEY_SLASH, KEY_RIGHTSHIFT, KEY_LEFTCTRL,
-    KEY_SPACE, KEY_GRAVE, KEY_BACKSLASH,
-    KEY_KATAKANAHIRAGANA, KEY_YEN
-};
-// -- Extended Keys (E0 prefix) -----------------
-static uint8_t jpn106ekm[] = { 
-    0x68, 0x72, 0x74, 0x75,
-    0x6C, 0x70, 0x71, 0x69 
-};
-static uint8_t jpn106ek[] = {
-    KEY_LEFT, KEY_DOWN, KEY_RIGHT, KEY_UP,
-    KEY_HOME, KEY_INSERT, KEY_DELETE, KEY_END 
-};
-
 
 // FIFO buffer for keypresses for standard mode
 // buffer length will be relatively small because under standard operation
@@ -126,6 +85,7 @@ static uint8_t bufferindex = 0;
 static uint8_t keybuffer[MAX_BUFFER];
 
 static bool isfamikbmode = true;
+static uint8_t kblayout;
 
 static uint8_t extended;
 static uint8_t release = 1;  // use opposite state
@@ -137,6 +97,14 @@ static uint8_t toggle = 0;
 
 static uint32_t kbword = 0;
 static uint32_t mseword = 0;
+
+static uint8_t *normkeys;
+static uint8_t *normkeymap;
+static uint8_t nkmsize;
+
+static uint8_t *extkeys;
+static uint8_t *extkeymap;
+static uint8_t ekmsize;
 
 
 void nes_handler_thread() {
@@ -156,10 +124,7 @@ void nes_handler_thread() {
                 toggle = 0;
             } else if ((nesread & 2) != toggle) {   // increment keyboard row
                 toggle = nesread & 2;
-                select += 1;
-                if (select > 17) {  //  wrap back to first row
-                    select = 0;
-                }
+                select = (select + 1) % 18; //  wrap back to first row
             } 
 
             //  set current output value on $4017
@@ -229,9 +194,38 @@ int main() {
     gpio_init(KB_MODE);
     gpio_set_dir(KB_MODE, GPIO_IN);
     gpio_pull_down(KB_MODE);
+
+    gpio_init(KB_LAYOUT);
+    gpio_set_dir(KB_LAYOUT, GPIO_IN);
+    gpio_pull_down(KB_LAYOUT);
     
     //  set famikb mode if high
     isfamikbmode = gpio_get(KB_MODE);
+
+    kblayout = gpio_get(KB_LAYOUT);
+
+    switch(kblayout) {
+        case 0:
+            normkeys = us104nk;
+            normkeymap = us104nkm;
+            nkmsize = sizeof(us104nkm);
+
+            extkeys = us104ek;
+            extkeymap = us104ekm;
+            ekmsize = sizeof(us104ekm);
+            break;
+        case 1:
+            normkeys = jpn106nk;
+            normkeymap = jpn106nkm;
+            nkmsize = sizeof(jpn106nkm);
+
+            extkeys = jpn106ek;
+            extkeymap = jpn106ekm;
+            ekmsize = sizeof(jpn106ekm);
+            break;
+        
+    }
+    
 
     // prepare buffers
     for (int i = 0; i < MAX_BUFFER; i++) {
@@ -261,16 +255,16 @@ int main() {
                 break;               // go back to start
             default:
                 if (extended) {  // if extended key, check the extkeymap
-                    for (uint8_t i = 0; i < sizeof(jpn106ekm); i++) {
-                        if (jpn106ekm[i] == code) {
-                            ascii = jpn106ek[i];
+                    for (uint8_t i = 0; i < ekmsize; i++) {
+                        if (*(extkeymap + i) == code) {
+                            ascii = *(extkeys + i);
                             break;
                         }
                     }
                 } else {    // if not extended, check the norkeymap
-                    for (uint8_t i = 0; i < sizeof(jpn106nkm); i++) {
-                        if (jpn106nkm[i] == code) {
-                            ascii = jpn106nk[i];
+                    for (uint8_t i = 0; i < nkmsize; i++) {
+                        if (*(normkeymap + i) == code) {
+                            ascii = *(normkeys + i);
                             break;
                         }
                     }
@@ -286,7 +280,7 @@ int main() {
                     }
                 } else {
                     // if the key is being released, add 0x80
-                    if (!release) {
+                    if (!release && ascii > 0x00) {
                         ascii += 0x80;
                     }
 
