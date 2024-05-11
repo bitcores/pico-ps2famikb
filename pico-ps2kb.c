@@ -44,7 +44,7 @@
 #define MAX_BUFFER 16
 #define WORD_SIZE 4
 
-// keypress matrix for family basic mode
+// keypress matrix for family basic mode & suborkb
 static uint8_t keymatrix[] = {
     0, 0, 0, 0, 0, 0, 0, 0, // 0 0, 0 1
     0, 0, 0, 0, 0, 0, 0, 0, // 1 0, 1 1
@@ -54,7 +54,11 @@ static uint8_t keymatrix[] = {
     0, 0, 0, 0, 0, 0, 0, 0, // 5 0, 5 1
     0, 0, 0, 0, 0, 0, 0, 0, // 6 0, 6 1
     0, 0, 0, 0, 0, 0, 0, 0, // 7 0, 7 1
-    0, 0, 0, 0, 0, 0, 0, 0  // 8 0, 8 1
+    0, 0, 0, 0, 0, 0, 0, 0, // 8 0, 8 1 famikb stops here
+    0, 0, 0, 0, 0, 0, 0, 0, // 9 0, 9 1
+    0, 0, 0, 0, 0, 0, 0, 0, // 10 0, 10 1
+    0, 0, 0, 0, 0, 0, 0, 0, // 11 0, 11 1
+    0, 0, 0, 0, 0, 0, 0, 0  // 12 0, 12 1
 };
 static const uint8_t famikey[] = {
     KEY_RIGHTBRACE, KEY_LEFTBRACE, KEY_ENTER, KEY_F8, 
@@ -75,6 +79,34 @@ static const uint8_t famikey[] = {
     KEY_2, KEY_1, KEY_TAB, KEY_LEFTSHIFT,
     KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_HOME,
     KEY_INSERT, KEY_BACKSPACE, KEY_SPACE, KEY_DOWN
+};
+static const uint8_t suborkey[] = {
+    KEY_4, KEY_G, KEY_F, KEY_C, 
+    KEY_F2, KEY_E, KEY_5, KEY_V,
+    KEY_2, KEY_D, KEY_S, KEY_END,
+    KEY_F1, KEY_W, KEY_3, KEY_X,
+    KEY_INSERT, KEY_BACKSPACE, KEY_PAGEDOWN, KEY_RIGHT, 
+    KEY_F8, KEY_PAGEUP, KEY_DELETE, KEY_HOME,
+    KEY_9, KEY_I, KEY_L, KEY_COMMA,
+    KEY_F5, KEY_O, KEY_0, KEY_DOT,
+    KEY_RIGHTBRACE, KEY_ENTER, KEY_UP, KEY_LEFT,
+    KEY_F7, KEY_LEFTBRACE, KEY_BACKSLASH, KEY_DOWN,
+    KEY_Q, KEY_CAPSLOCK, KEY_Z, KEY_TAB,
+    KEY_ESC, KEY_A, KEY_1, KEY_LEFTCTRL,
+    KEY_7, KEY_Y, KEY_K, KEY_M,
+    KEY_F4, KEY_U, KEY_8, KEY_J,
+    KEY_MINUS, KEY_SEMICOLON, KEY_APOSTROPHE, KEY_SLASH,
+    KEY_F6, KEY_P, KEY_EQUAL, KEY_LEFTSHIFT,
+    KEY_T, KEY_H, KEY_N, KEY_SPACE,
+    KEY_F3, KEY_R, KEY_6, KEY_B,
+    KEY_KP6, KEY_KPENTER, KEY_KP4, KEY_KP8,
+    KEY_KP2, 0x00, 0x00, 0x00,
+    KEY_LEFTALT, KEY_KP4, KEY_KP7, KEY_F11,
+    KEY_F12, KEY_KP1, KEY_KP2, KEY_KP8,
+    KEY_KPMINUS, KEY_KPPLUS, KEY_KPASTERISK, KEY_KP9,
+    KEY_F10, KEY_KP5, KEY_KPSLASH, KEY_NUMLOCK,
+    KEY_GRAVE, KEY_KP6, KEY_PAUSE, KEY_SPACE,
+    KEY_F9, KEY_KP3, KEY_KPDOT, KEY_KP0
 };
 
 
@@ -302,6 +334,7 @@ int main() {
                 break;
         }
 
+        // is this even necessary?
         if (bufferindex >= MAX_BUFFER) {
             bufferindex = MAX_BUFFER-1;
         }
