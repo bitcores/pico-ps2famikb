@@ -21,8 +21,8 @@
 // $4016 "out" from Famicom/NES, three consecutive pins
 #define NES_OUT 0
 // $4017 OE $4017 strobe read
-#define NES_JOY2OE 3
-// $4017 "data" lines, four consecutive pins
+#define NES_JOY2OE 9
+// $4017 "data" lines, four consecutive pins (5 for suborkb+mse)
 #define NES_DATA 4
 
 // KBD data and clock inputs must be consecutive with
@@ -38,8 +38,6 @@
 // keyboard mode select (2 pins?)
 #define KB_MODE 14 
 
-// keyboard layout select (4 pins?)
-#define KB_LAYOUT 16
 
 #define MAX_BUFFER 16
 #define WORD_SIZE 4
@@ -130,14 +128,6 @@ static uint8_t toggle = 0;
 static uint32_t kbword = 0;
 static uint32_t mseword = 0;
 
-static uint8_t *normkeys;
-static uint8_t *normkeymap;
-static uint8_t nkmsize;
-
-static uint8_t *extkeys;
-static uint8_t *extkeymap;
-static uint8_t ekmsize;
-
 
 void nes_handler_thread() {
 
@@ -199,7 +189,6 @@ void nes_handler_thread() {
 
                 //mseword = mseword << 1;
                 kbword = kbword << 1;
-                //joypad = joypad << 1;
             }
 
             uint32_t serialout = 0;
@@ -227,36 +216,9 @@ int main() {
     gpio_set_dir(KB_MODE, GPIO_IN);
     gpio_pull_down(KB_MODE);
 
-    gpio_init(KB_LAYOUT);
-    gpio_set_dir(KB_LAYOUT, GPIO_IN);
-    gpio_pull_down(KB_LAYOUT);
-    
+
     //  set famikb mode if high
     isfamikbmode = gpio_get(KB_MODE);
-
-    kblayout = gpio_get(KB_LAYOUT);
-
-    switch(kblayout) {
-        case 0:
-            normkeys = us104nk;
-            normkeymap = us104nkm;
-            nkmsize = sizeof(us104nkm);
-
-            extkeys = us104ek;
-            extkeymap = us104ekm;
-            ekmsize = sizeof(us104ekm);
-            break;
-        case 1:
-            normkeys = jpn106nk;
-            normkeymap = jpn106nkm;
-            nkmsize = sizeof(jpn106nkm);
-
-            extkeys = jpn106ek;
-            extkeymap = jpn106ekm;
-            ekmsize = sizeof(jpn106ekm);
-            break;
-        
-    }
     
 
     // prepare buffers
@@ -287,16 +249,16 @@ int main() {
                 break;               // go back to start
             default:
                 if (extended) {  // if extended key, check the extkeymap
-                    for (uint8_t i = 0; i < ekmsize; i++) {
-                        if (*(extkeymap + i) == code) {
-                            ascii = *(extkeys + i);
+                    for (uint8_t i = 0; i < sizeof(extkeymap); i++) {
+                        if (extkeymap[i] == code) {
+                            ascii = extkeys[i];
                             break;
                         }
                     }
                 } else {    // if not extended, check the norkeymap
-                    for (uint8_t i = 0; i < nkmsize; i++) {
-                        if (*(normkeymap + i) == code) {
-                            ascii = *(normkeys + i);
+                    for (uint8_t i = 0; i < sizeof(norkeymap); i++) {
+                        if (norkeymap[i] == code) {
+                            ascii = norkeys[i];
                             break;
                         }
                     }
