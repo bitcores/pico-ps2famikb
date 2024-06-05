@@ -19,24 +19,31 @@
 #include "kblayout.c"
 
 // $4016 "out" from Famicom/NES, three consecutive pins
-#define NES_OUT 0
+#define NES_OUT 2
 // $4017 OE $4017 strobe read
-#define NES_JOY2OE 9
-// $4017 "data" lines, four consecutive pins (5 for suborkb+mse)
-#define NES_DATA 4
+#define NES_JOY2OE 10
+// $4017 "data" lines, four consecutive pins (five for suborkb+mse, 5)
+#define NES_DATA 6
 
 // KBD data and clock inputs must be consecutive with
 // data in the lower position.
-#define DAT_GPIO 10 // PS/2 data
-#define CLK_GPIO 11 // PS/2 clock
+#define DAT_GPIO 12 // PS/2 data
+#define CLK_GPIO 13 // PS/2 clock
 
 // mouse data and clock inputs must be consecutive with
 // data in the lower position.
-#define MSE_DAT_GPIO 12 // PS/2 data
-#define MSE_CLK_GPIO 13 // PS/2 clock
+#define MSE_DAT_GPIO 14 // PS/2 data
+#define MSE_CLK_GPIO 15 // PS/2 clock
 
-// keyboard mode select (2 pins?)
-#define KB_MODE 14 
+// I2C communication pins
+#define I2C_SDA_PIN 0
+#define I2C_SCL_PIN 1
+
+// keyboard mode select
+#define KB_MODE 26
+
+// direct input or usbhost select
+#define USBHOST_ENABLE 28
 
 
 #define MAX_BUFFER 16
@@ -128,6 +135,10 @@ static uint8_t toggle = 0;
 static uint32_t kbword = 0;
 static uint32_t mseword = 0;
 
+// I2C configuration
+static const uint I2C_ADDRESS = 0x17;
+static const uint I2C_BAUDRATE = 100000; // 100 kHz
+
 
 void nes_handler_thread() {
 
@@ -216,9 +227,16 @@ int main() {
     gpio_set_dir(KB_MODE, GPIO_IN);
     gpio_pull_down(KB_MODE);
 
-
-    //  set famikb mode if high
+    //  0: serialized mode
+    //  1: famikb mode
+    //  2: subor mode
+    //  3: ??
     isfamikbmode = gpio_get(KB_MODE);
+
+
+    gpio_init(USBHOST_ENABLE);
+    gpio_set_dir(USBHOST_ENABLE, GPIO_IN);
+    gpio_pull_down(USBHOST_ENABLE);
     
 
     // prepare buffers
