@@ -23,6 +23,8 @@ add_subdirectory(ps2famikb-lib)
 add_executable(pico-ps2kb pico-ps2kb.c)
 
 target_link_libraries(pico-ps2kb PUBLIC
+    pico_i2c_slave
+    hardware_i2c
     pico_stdlib
     pico_multicore
     stdinit-lib

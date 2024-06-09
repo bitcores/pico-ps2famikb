@@ -6,6 +6,8 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 #include <stdio.h>
+#include <hardware/i2c.h>
+#include <pico/i2c_slave.h>
 
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
@@ -115,6 +117,14 @@ static const uint8_t suborkey[] = {
 };
 
 
+// Just use a 6 byte memory array for storing the latest data for the mouse
+static struct
+{
+    uint8_t mem[6];
+    uint8_t mem_address;
+    bool mem_address_written;
+} msebuffer;
+
 // FIFO buffer for keypresses for standard mode
 // buffer length will be relatively small because under standard operation
 // the NES is likely to be reading from the buffer very frequently
@@ -122,6 +132,7 @@ static uint8_t bufferindex = 0;
 static uint8_t keybuffer[MAX_BUFFER];
 
 static bool isfamikbmode = true;
+static bool usbhostmode = false;
 static uint8_t kblayout;
 
 static uint8_t extended;
@@ -138,7 +149,38 @@ static uint32_t mseword = 0;
 // I2C configuration
 static const uint I2C_ADDRESS = 0x17;
 static const uint I2C_BAUDRATE = 100000; // 100 kHz
-
+// Our handler is called from the I2C ISR, so it must complete quickly. Blocking calls /
+// printing to stdio may interfere with interrupt handling.
+static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
+    switch (event) {
+    case I2C_SLAVE_RECEIVE: // master has written some data
+        if (!msebuffer.mem_address_written) {
+            // writes always start with the memory address
+            // the first value here is a len, ignore
+            msebuffer.mem_address = i2c_read_byte_raw(i2c);
+            msebuffer.mem_address_written = true;
+        } else {
+            // save into memory
+            // bitwise NOT the values into buffer
+            msebuffer.mem[msebuffer.mem_address] = ~i2c_read_byte_raw(i2c);
+            msebuffer.mem_address++;
+        }
+        break;
+    case I2C_SLAVE_REQUEST: // master is requesting data
+        // load from memory
+        i2c_write_byte_raw(i2c, msebuffer.mem[msebuffer.mem_address]);
+        msebuffer.mem_address++;
+        break;
+    case I2C_SLAVE_FINISH: // master has signalled Stop / Restart
+        // read the value from mem[0] for keyboard to buffer
+        keybuffer[bufferindex] = ~msebuffer.mem[0];
+        bufferindex++;
+        msebuffer.mem_address_written = false;
+        break;
+    default:
+        break;
+    }
+}
 
 void nes_handler_thread() {
 
@@ -182,8 +224,10 @@ void nes_handler_thread() {
                 for (int i = 0; i < WORD_SIZE; i++) {
                     kbword = kbword << 8;
                     kbword += keybuffer[i];
-                    //mseword = mseword << 8;
-                    //mseword += msebuffer[i];
+                    // mouse doesn't actually have a history
+                    // just get the latest values
+                    mseword = mseword << 8;
+                    mseword += msebuffer.mem[i+2];
                 }
                 int c = WORD_SIZE;
                 if (bufferindex < WORD_SIZE) {
@@ -197,8 +241,7 @@ void nes_handler_thread() {
             }
 
             if (ps2famikb_chkstrobe()) {
-
-                //mseword = mseword << 1;
+                mseword = mseword << 1;
                 kbword = kbword << 1;
             }
 
@@ -218,10 +261,6 @@ void nes_handler_thread() {
 int main() {
     set_sys_clock_khz(270000, true);
 
-    //stdio_init();
-    //printf("PS/2 KDB example\n");
-    kbd_init(1, DAT_GPIO);
-
     //  configure pico-ps2kb based on gpio
     gpio_init(KB_MODE);
     gpio_set_dir(KB_MODE, GPIO_IN);
@@ -238,10 +277,14 @@ int main() {
     gpio_set_dir(USBHOST_ENABLE, GPIO_IN);
     gpio_pull_down(USBHOST_ENABLE);
     
+    usbhostmode = gpio_get(USBHOST_ENABLE);
 
     // prepare buffers
     for (int i = 0; i < MAX_BUFFER; i++) {
         keybuffer[i] = 0xFF;
+        if (i < 6) {
+            msebuffer.mem[i] = 0xFF;
+        }
     }
 
     //  run the NES handler on seperate core
@@ -252,73 +295,97 @@ int main() {
     gpio_init(LED_PIN);
     gpio_set_dir(LED_PIN, GPIO_OUT);
     gpio_put(LED_PIN, 1);
+
+    if (usbhostmode) {
+        gpio_init(I2C_SDA_PIN);
+        gpio_set_function(I2C_SDA_PIN, GPIO_FUNC_I2C);
+        gpio_pull_up(I2C_SDA_PIN);
+
+        gpio_init(I2C_SCL_PIN);
+        gpio_set_function(I2C_SCL_PIN, GPIO_FUNC_I2C);
+        gpio_pull_up(I2C_SCL_PIN);
+
+        
+        i2c_init(i2c0, I2C_BAUDRATE);
+        // configure I2C0 for slave mode
+        i2c_slave_init(i2c0, I2C_ADDRESS, &i2c_slave_handler);
+
+        // loop forever now
+        for (;;) {
+            tight_loop_contents();
+        }
+        
+    }
+    else {
+        kbd_init(1, DAT_GPIO);
     
-    for (;;) {
-        uint8_t code = kbd_getraw();
+        for (;;) {
+            uint8_t code = kbd_getraw();
 
-        //printf("%02d\n", code);
+            //printf("%02d\n", code);
 
-        switch (code) {
-            case 0xE0:
-                extended = 1;        // extended-ascii code 0xE0 detected
-                break;
-            case 0xF0:               // key-release code 0xF0 detected
-                release = 0;         // set release
-                break;               // go back to start
-            default:
-                if (extended) {  // if extended key, check the extkeymap
-                    for (uint8_t i = 0; i < sizeof(extkeymap); i++) {
-                        if (extkeymap[i] == code) {
-                            ascii = extkeys[i];
-                            break;
+            switch (code) {
+                case 0xE0:
+                    extended = 1;        // extended-ascii code 0xE0 detected
+                    break;
+                case 0xF0:               // key-release code 0xF0 detected
+                    release = 0;         // set release
+                    break;               // go back to start
+                default:
+                    if (extended) {  // if extended key, check the extkeymap
+                        for (uint8_t i = 0; i < sizeof(extkeymap); i++) {
+                            if (extkeymap[i] == code) {
+                                ascii = extkeys[i];
+                                break;
+                            }
+                        }
+                    } else {    // if not extended, check the norkeymap
+                        for (uint8_t i = 0; i < sizeof(norkeymap); i++) {
+                            if (norkeymap[i] == code) {
+                                ascii = norkeys[i];
+                                break;
+                            }
                         }
                     }
-                } else {    // if not extended, check the norkeymap
-                    for (uint8_t i = 0; i < sizeof(norkeymap); i++) {
-                        if (norkeymap[i] == code) {
-                            ascii = norkeys[i];
-                            break;
+
+                    if (isfamikbmode) {
+                        // update the status of the key
+                        for (uint8_t i = 0; i < sizeof(famikey); i++) {
+                            if (famikey[i] == ascii) {
+                                keymatrix[i] = release;
+                                break;
+                            }
+                        }
+                    } else {
+                        // if the key is being released, add 0x80
+                        if (!release && ascii > 0x00) {
+                            ascii += 0x80;
+                        }
+
+                        // bitwise NOT the ascii values into the buffer
+                        if ((bufferindex+1) == MAX_BUFFER) {
+                            for (int i = 1; i < MAX_BUFFER; i++) {
+                                keybuffer[i-1] = keybuffer[i];
+                            }
+                            keybuffer[bufferindex] = ~ascii;
+                        }
+                        else {
+                            keybuffer[bufferindex] = ~ascii;
+                            bufferindex++;
                         }
                     }
-                }
 
-                if (isfamikbmode) {
-                    // update the status of the key
-                    for (uint8_t i = 0; i < sizeof(famikey); i++) {
-                        if (famikey[i] == ascii) {
-                            keymatrix[i] = release;
-                            break;
-                        }
-                    }
-                } else {
-                    // if the key is being released, add 0x80
-                    if (!release && ascii > 0x00) {
-                        ascii += 0x80;
-                    }
+                    extended = 0;
+                    release = 1;
+                    break;
+            }
 
-                    // bitwise NOT the ascii values into the buffer
-                    if ((bufferindex+1) == MAX_BUFFER) {
-                        for (int i = 1; i < MAX_BUFFER; i++) {
-                            keybuffer[i-1] = keybuffer[i];
-                        }
-                        keybuffer[bufferindex] = ~ascii;
-                    }
-                    else {
-                        keybuffer[bufferindex] = ~ascii;
-                        bufferindex++;
-                    }
-                }
+            // is this even necessary?
+            if (bufferindex >= MAX_BUFFER) {
+                bufferindex = MAX_BUFFER-1;
+            }
 
-                extended = 0;
-                release = 1;
-                break;
         }
-
-        // is this even necessary?
-        if (bufferindex >= MAX_BUFFER) {
-            bufferindex = MAX_BUFFER-1;
-        }
-
     }
 
 }
