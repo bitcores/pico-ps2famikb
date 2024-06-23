@@ -123,6 +123,8 @@ static struct
     uint8_t mem[6];
     uint8_t mem_address;
     bool mem_address_written;
+    bool new_msg;
+    bool garbage_message;
 } hostmsg;
 
 // FIFO buffer for keypresses for standard mode
@@ -161,59 +163,75 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
             // writes always start with the memory address
             // the first value here is a len, ignore
             hostmsg.mem_address = i2c_read_byte_raw(i2c);
+            // host should always address addr 0 in the buffer
+            if (hostmsg.mem_address != 0){
+                hostmsg.garbage_message = true;
+            } else {
+                hostmsg.garbage_message = false;
+            }
             hostmsg.mem_address_written = true;
         } else {
-            // save into memory
-            // bitwise NOT the values into buffer
-            hostmsg.mem[hostmsg.mem_address] = ~i2c_read_byte_raw(i2c);
-            hostmsg.mem_address++;
+            // if it is garbage we just read the values
+            // but don't put them in memory
+            if (hostmsg.garbage_message) {
+                i2c_read_byte_raw(i2c);
+            }
+            else { // bitwise NOT the values into buffer
+                hostmsg.mem[hostmsg.mem_address] = ~i2c_read_byte_raw(i2c);
+                hostmsg.mem_address = (hostmsg.mem_address + 1) % 6;
+            }
         }
         break;
     case I2C_SLAVE_REQUEST: // master is requesting data
         // load from memory
         i2c_write_byte_raw(i2c, hostmsg.mem[hostmsg.mem_address]);
-        hostmsg.mem_address++;
+        hostmsg.mem_address = (hostmsg.mem_address + 1) % 6;
         break;
     case I2C_SLAVE_FINISH: // master has signalled Stop / Restart
-
-        if (isfamikbmode) {
-            // do famikbmode
-            int state = hostmsg.mem[1] >> 7;
-            int ascii = (~hostmsg.mem[1]) & 127;
-            for (uint8_t i = 0; i < sizeof(famikey); i++) {
-                if (famikey[i] == ascii) {
-                    keymatrix[i] = state;
-                    break;
+        if (!hostmsg.garbage_message) {
+            if (isfamikbmode) {
+                // do famikbmode
+                int state = hostmsg.mem[1] >> 7;
+                int ascii = (~hostmsg.mem[1]) & 127;
+                for (uint8_t i = 0; i < sizeof(famikey); i++) {
+                    if (famikey[i] == ascii) {
+                        keymatrix[i] = state;
+                        break;
+                    }
+                }
+            } else {
+                // read the value from mem[1] for keyboard to buffer if not ~0x00
+                // shouldn't need to check if keyboard is "present" for this
+                if (hostmsg.mem[1] != 0xFF) {
+                    keybuffer[bufferindex] = hostmsg.mem[1];
+                    if ((bufferindex+1) < MAX_BUFFER) {
+                        bufferindex++;
+                    }
+                }
+                // only update mouse buffer if mouse is "present"
+                if ((hostmsg.mem[2] & 32) == 0) {
+                    // and the first byte with the current value
+                    // this means if a button is pressed, it will stay "pressed"
+                    // until the NES polls it (probably next frame)
+                    msebuffer[0] = msebuffer[0] & hostmsg.mem[2];
+                    // if true, we are in relative mode
+                    if ((hostmsg.mem[2] & 8) == 0) {
+                        msebuffer[1] += hostmsg.mem[3];
+                        msebuffer[2] += hostmsg.mem[4];
+                    } else {
+                        msebuffer[1] = hostmsg.mem[3];
+                        msebuffer[2] = hostmsg.mem[4];   
+                    }
+                    // some wheel movements or middle button events could
+                    // be missed. target for improvement later
+                    msebuffer[3] = hostmsg.mem[5];
                 }
             }
-        } else {
-            // read the value from mem[1] for keyboard to buffer if not 0x00
-            // shouldn't need to check if keyboard is "present" for this
-            if (hostmsg.mem[1] > 0) {
-                keybuffer[bufferindex] = hostmsg.mem[1];
-                bufferindex++;
-            }
-            // only update mouse buffer if mouse is "present"
-            if ((hostmsg.mem[2] & 32) == 0) {
-                // and the first byte with the current value
-                // this means if a button is pressed, it will stay "pressed"
-                // until the NES polls it (probably next frame)
-                msebuffer[0] = msebuffer[0] & hostmsg.mem[2];
-                // if true, we are in relative mode
-                if ((hostmsg.mem[2] & 8) == 0) {
-                    msebuffer[1] += hostmsg.mem[3];
-                    msebuffer[2] += hostmsg.mem[4];
-                } else {
-                    msebuffer[1] = hostmsg.mem[3];
-                    msebuffer[2] = hostmsg.mem[4];   
-                }
-                // some wheel movements or middle button events could
-                // be missed. target for improvement later
-                msebuffer[3] = hostmsg.mem[5];
-            }
+            hostmsg.new_msg = true;
         }
         
         hostmsg.mem_address_written = false;
+        
         break;
     default:
         break;
@@ -275,15 +293,20 @@ void nes_handler_thread() {
                 for (int i = c; i < MAX_BUFFER; i++) {
                     keybuffer[i-c] = keybuffer[i];
                 }
-                // actually update button values
-                msebuffer[0] = hostmsg.mem[2];
+                bufferindex = bufferindex - c;
+
+                // if there is new data from the host
+                if (hostmsg.new_msg) {
+                    // actually update button values
+                    msebuffer[0] = hostmsg.mem[2];
+                    hostmsg.new_msg = false;
+                }
+
                 // reset relative values in buffer
                 if ((msebuffer[0] & 8) == 0) {
                     msebuffer[1] = msebuffer[2] = 0xFF;
                 }
-                msebuffer[3] = msebuffer[3] | 127;
-                
-                bufferindex = bufferindex - c;
+                msebuffer[3] = msebuffer[3] | 127; 
             }
 
             if (ps2famikb_chkstrobe()) {
@@ -329,9 +352,13 @@ int main() {
     for (int i = 0; i < MAX_BUFFER; i++) {
         keybuffer[i] = 0xFF;
     }
-    for (int i = 0; i < 4; i++) {
+    for (int i = 1; i < 4; i++) {
         msebuffer[i] = 0xFF;
     }
+    // set only the device id in the buffer so if the NES
+    // strobes for update before data received it will know
+    // the interface is present
+    msebuffer[0] = 0xF9;
 
     //  run the NES handler on seperate core
     multicore_launch_core1(nes_handler_thread);
