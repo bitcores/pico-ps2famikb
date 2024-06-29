@@ -126,8 +126,8 @@ with SMBus(i2cbus) as bus:
 		while True:
 			# first byte will be keyboard value, if present
 			# https://forums.nesdev.org/viewtopic.php?p=248338#p248338
-			msg = [0,0,0,0,0]
 			for key, mask in selector.select():
+                msg = [0,0,0,0,0]
 				doupdate = False
 				thisdev = key.fileobj
 				for event in thisdev.read():
@@ -150,9 +150,9 @@ with SMBus(i2cbus) as bus:
 									msg[0] += 128
 								if ev.ecodes.keys[event.code] == "KEY_LEFTSHIFT":
 									capture_combo[0] = 1 if event.value > 0 else 0
-								if ev.ecodes.keys[event.code] == "KEY_LEFTCTRL":
+								elif ev.ecodes.keys[event.code] == "KEY_LEFTCTRL":
 									capture_combo[1] = 1 if event.value > 0 else 0
-								if ev.ecodes.keys[event.code] == "KEY_ESC":
+								elif ev.ecodes.keys[event.code] == "KEY_ESC":
 									capture_combo[2] = 1 if event.value > 0 else 0
 						elif et == ev.ecodes.EV_REL:
 							doupdate = True
