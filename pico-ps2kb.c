@@ -132,9 +132,15 @@ static struct
 // the NES is likely to be reading from the buffer very frequently
 static uint8_t bufferindex = 0;
 static uint8_t keybuffer[MAX_BUFFER];
+static uint8_t kbbbindex = 0;
+static uint8_t kbbackbuffer[MAX_BUFFER];
+// transport buffer index
+static uint8_t transbbindex = 0;
 // mouse updates won't be buffered like the keyboard, if multiple updates come
 // inbetween a frame, we want to put them together instead of stack them up
 static uint8_t msebuffer[4];
+
+static bool NESinlatch = false;
 
 static bool isfamikbmode = true;
 static bool usbhostmode = false;
@@ -203,10 +209,8 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
                 // read the value from mem[1] for keyboard to buffer if not ~0x00
                 // shouldn't need to check if keyboard is "present" for this
                 if (hostmsg.mem[1] != 0xFF) {
-                    keybuffer[bufferindex] = hostmsg.mem[1];
-                    if ((bufferindex+1) < MAX_BUFFER) {
-                        bufferindex++;
-                    }
+                    kbbackbuffer[kbbbindex] = hostmsg.mem[1];
+                    kbbbindex = (kbbbindex + 1) % MAX_BUFFER;
                 }
                 // only update mouse buffer if mouse is "present"
                 if ((hostmsg.mem[2] & 32) == 0) {
@@ -275,6 +279,9 @@ void nes_handler_thread() {
 
             // check for latch signal and latch the buffers
             if (ps2famikb_chklatch()) {
+                // check if latched for buffer context
+                NESinlatch = true;
+
                 kbword = 0xFFFFFFFF;
                 mseword = 0xFFFFFFFF;
                 // load the four oldest buffered values
@@ -307,6 +314,8 @@ void nes_handler_thread() {
                     msebuffer[1] = msebuffer[2] = 0xFF;
                 }
                 msebuffer[3] = msebuffer[3] | 127; 
+
+                NESinlatch = false;
             }
 
             if (ps2famikb_chkstrobe()) {
@@ -385,7 +394,17 @@ int main() {
 
         // loop forever now
         for (;;) {
-            tight_loop_contents();
+            if ((transbbindex != kbbbindex) && !NESinlatch){
+                // if the buffer is full, don't do anything yet
+                if ((bufferindex+1) < MAX_BUFFER) {
+                    keybuffer[bufferindex] = kbbackbuffer[transbbindex];
+                    bufferindex++;
+
+                    transbbindex = (transbbindex + 1) % MAX_BUFFER;
+                } 
+            }
+            // gets a little ansy without a little sleep here
+            sleep_ms(1);
         }
         
     }
