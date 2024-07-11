@@ -142,7 +142,7 @@ static uint8_t msebuffer[4];
 
 static bool NESinlatch = false;
 
-static bool isfamikbmode = true;
+static uint8_t ps2kbmode;
 static bool usbhostmode = false;
 static uint8_t kblayout;
 
@@ -195,7 +195,7 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
         break;
     case I2C_SLAVE_FINISH: // master has signalled Stop / Restart
         if (!hostmsg.garbage_message) {
-            if (isfamikbmode) {
+            if (ps2kbmode == 1) {
                 // do famikbmode
                 int state = hostmsg.mem[1] >> 7;
                 int ascii = (~hostmsg.mem[1]) & 127;
@@ -205,7 +205,7 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
                         break;
                     }
                 }
-            } else {
+            } else if (ps2kbmode == 0) {
                 // read the value from mem[1] for keyboard to buffer if not ~0x00
                 // shouldn't need to check if keyboard is "present" for this
                 if (hostmsg.mem[1] != 0xFF) {
@@ -244,10 +244,10 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
 
 void nes_handler_thread() {
 
-    ps2famikb_init(0, NES_OUT, NES_JOY2OE, NES_DATA, isfamikbmode);
+    ps2famikb_init(0, NES_OUT, NES_JOY2OE, NES_DATA, ps2kbmode);
 
     
-    if (isfamikbmode) {
+    if (ps2kbmode == 1) {
         for (;;) {
             //  read the current $4016 ouput
             uint8_t nesread = ps2famikb_readnes();
@@ -273,7 +273,7 @@ void nes_handler_thread() {
             ps2famikb_putkb(output);
         }
 
-    } else {
+    } else if (ps2kbmode == 0) {
 
         for (;;) {
 
@@ -340,16 +340,16 @@ int main() {
     set_sys_clock_khz(270000, true);
 
     //  configure pico-ps2kb based on gpio
-    gpio_init(KB_MODE);
-    gpio_set_dir(KB_MODE, GPIO_IN);
-    gpio_pull_down(KB_MODE);
+    gpio_init(KB_MODE); gpio_init(KB_MODE+1);
+    gpio_set_dir(KB_MODE, GPIO_IN); gpio_set_dir(KB_MODE+1, GPIO_IN);
+    gpio_pull_down(KB_MODE); gpio_pull_down(KB_MODE+1);
 
     //  0: serialized mode
     //  1: famikb mode
     //  2: subor mode
     //  3: ??
-    isfamikbmode = gpio_get(KB_MODE);
-
+    ps2kbmode |= gpio_get(KB_MODE+1) << 1;
+    ps2kbmode |= gpio_get(KB_MODE);
 
     gpio_init(USBHOST_ENABLE);
     gpio_set_dir(USBHOST_ENABLE, GPIO_IN);
@@ -440,7 +440,7 @@ int main() {
                         }
                     }
 
-                    if (isfamikbmode) {
+                    if (ps2kbmode == 1) {
                         // update the status of the key
                         for (uint8_t i = 0; i < sizeof(famikey); i++) {
                             if (famikey[i] == ascii) {
@@ -448,7 +448,7 @@ int main() {
                                 break;
                             }
                         }
-                    } else {
+                    } else if (ps2kbmode == 0) {
                         // if the key is being released, add 0x80
                         if (!release && ascii > 0x00) {
                             ascii += 0x80;
