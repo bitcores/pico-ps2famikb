@@ -10,6 +10,8 @@ i2cbus = 0
 pal = True
 # absolute or relative mouse updates
 abs_mouse = True
+# send hold repeats
+hold_repeat = True
 
 os.system('clear')
 
@@ -127,7 +129,7 @@ with SMBus(i2cbus) as bus:
 			# first byte will be keyboard value, if present
 			# https://forums.nesdev.org/viewtopic.php?p=248338#p248338
 			for key, mask in selector.select():
-                msg = [0,0,0,0,0]
+				msg = [0,0,0,0,0]
 				doupdate = False
 				thisdev = key.fileobj
 				for event in thisdev.read():
@@ -135,7 +137,6 @@ with SMBus(i2cbus) as bus:
 					#print(et, type(et))
 					try:
 						if et == ev.ecodes.EV_KEY:
-							doupdate = True
 							#print(ev.ecodes.keys[event.code], event.value)
 							# check if mouse buttons first
 							if "BTN_LEFT" in ev.ecodes.keys[event.code]:
@@ -145,15 +146,18 @@ with SMBus(i2cbus) as bus:
 							elif ev.ecodes.keys[event.code] == "BTN_RIGHT":
 								mousebtn[2] = event.value
 							elif ev.ecodes.keys[event.code] in keymap:
-								msg[0] = keymap[ev.ecodes.keys[event.code]]
-								if event.value == 0:
-									msg[0] += 128
+								if hold_repeat or event.value < 2:
+									msg[0] = keymap[ev.ecodes.keys[event.code]]
+									if event.value == 0:
+										msg[0] += 128
 								if ev.ecodes.keys[event.code] == "KEY_LEFTSHIFT":
 									capture_combo[0] = 1 if event.value > 0 else 0
 								elif ev.ecodes.keys[event.code] == "KEY_LEFTCTRL":
 									capture_combo[1] = 1 if event.value > 0 else 0
 								elif ev.ecodes.keys[event.code] == "KEY_ESC":
 									capture_combo[2] = 1 if event.value > 0 else 0
+							if not msg[0] == 0:
+								doupdate = True
 						elif et == ev.ecodes.EV_REL:
 							doupdate = True
 							#print(ev.ecodes.REL[event.code], event.value)
