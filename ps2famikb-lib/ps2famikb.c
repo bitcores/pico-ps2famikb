@@ -52,7 +52,7 @@ void ps2famikb_init(uint pio, uint nesin_gpio, uint nesoe_gpio, uint kbout_gpio,
     pio_sm_init(nesin_pio, neskbrst_sm, neskbrstos, &neskbrstc);
     pio_sm_set_enabled(nesin_pio, neskbrst_sm, true);
 
-    if (kbmode) { // set up the NES input PIO on $4016
+    if (kbmode > 0) { // set up the NES input PIO on $4016
         neskben_sm = pio_claim_unused_sm(nesin_pio, true);
         uint neskbenos = pio_add_program(nesin_pio, &nesinprg_program);
         pio_sm_set_consecutive_pindirs(nesin_pio, neskben_sm, nesin_gpio+2, 1, false);
@@ -72,15 +72,15 @@ void ps2famikb_init(uint pio, uint nesin_gpio, uint nesoe_gpio, uint kbout_gpio,
         pio_sm_set_enabled(nesin_pio, neskbadv_sm, true);
 
 
-        for (uint8_t i = kbout_gpio; i < kbout_gpio+4; i++) {
+        for (uint8_t i = kbout_gpio; i < kbout_gpio+5; i++) {
             pio_gpio_init(kbout_pio, i);
         }
     
         kbout_sm = pio_claim_unused_sm(kbout_pio, true);
         uint kboutos = pio_add_program(kbout_pio, &kbout_program);
-        pio_sm_set_consecutive_pindirs(kbout_pio, kbout_sm, kbout_gpio, 4, true);
+        pio_sm_set_consecutive_pindirs(kbout_pio, kbout_sm, kbout_gpio, 5, true);
         pio_sm_config kboutc = kbout_program_get_default_config(kboutos);
-        sm_config_set_out_pins(&kboutc, kbout_gpio, 4);
+        sm_config_set_out_pins(&kboutc, kbout_gpio, 5);
         sm_config_set_out_shift(&kboutc, true, false, 32);
         pio_sm_init(kbout_pio, kbout_sm, kboutos, &kboutc);
         pio_sm_set_enabled(kbout_pio, kbout_sm, true);
@@ -100,15 +100,15 @@ void ps2famikb_init(uint pio, uint nesin_gpio, uint nesoe_gpio, uint kbout_gpio,
         pio_sm_set_enabled(nesin_pio, nesoe_sm, true);
 
 
-        for (uint8_t i = kbout_gpio; i < kbout_gpio+4; i++) {
+        for (uint8_t i = kbout_gpio; i < kbout_gpio+5; i++) {
             pio_gpio_init(kbout_pio, i);
         }
     
         kbout_sm = pio_claim_unused_sm(kbout_pio, true);
         uint kboutos = pio_add_program(kbout_pio, &kbmseout_program);
-        pio_sm_set_consecutive_pindirs(kbout_pio, kbout_sm, kbout_gpio+2, 2, true);
+        pio_sm_set_consecutive_pindirs(kbout_pio, kbout_sm, kbout_gpio+3, 2, true);
         pio_sm_config kboutc = kbout_program_get_default_config(kboutos);
-        sm_config_set_out_pins(&kboutc, kbout_gpio+2, 2);
+        sm_config_set_out_pins(&kboutc, kbout_gpio+3, 2);
         sm_config_set_out_shift(&kboutc, true, false, 32);
         pio_sm_init(kbout_pio, kbout_sm, kboutos, &kboutc);
         pio_sm_set_enabled(kbout_pio, kbout_sm, true);    

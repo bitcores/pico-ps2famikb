@@ -24,8 +24,8 @@
 #define NES_OUT 2
 // $4017 OE $4017 strobe read
 #define NES_JOY2OE 10
-// $4017 "data" lines, four consecutive pins (five for suborkb+mse, 5)
-#define NES_DATA 6
+// $4017 "data" lines, five consecutive pins
+#define NES_DATA 5
 
 // KBD data and clock inputs must be consecutive with
 // data in the lower position.
@@ -41,7 +41,7 @@
 #define I2C_SDA_PIN 0
 #define I2C_SCL_PIN 1
 
-// keyboard mode select
+// keyboard mode select, two consecutive pins
 #define KB_MODE 26
 
 // direct input or usbhost select
@@ -195,8 +195,8 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
         break;
     case I2C_SLAVE_FINISH: // master has signalled Stop / Restart
         if (!hostmsg.garbage_message) {
-            if (ps2kbmode == 1) {
-                // do famikbmode
+            if (ps2kbmode == 1 || ps2kbmode == 3) {
+                // famikey modes
                 int state = hostmsg.mem[1] >> 7;
                 int ascii = (~hostmsg.mem[1]) & 127;
                 for (uint8_t i = 0; i < sizeof(famikey); i++) {
@@ -205,7 +205,17 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
                         break;
                     }
                 }
-            } else if (ps2kbmode == 0) {
+            } else if (ps2kbmode == 2) {
+                // subor mode
+                int state = hostmsg.mem[1] >> 7;
+                int ascii = (~hostmsg.mem[1]) & 127;
+                for (uint8_t i = 0; i < sizeof(suborkey); i++) {
+                    if (suborkey[i] == ascii) {
+                        keymatrix[i] = state;
+                        break;
+                    }
+                }
+            } else { // keyboard mouse host mode
                 // read the value from mem[1] for keyboard to buffer if not ~0x00
                 // shouldn't need to check if keyboard is "present" for this
                 if (hostmsg.mem[1] != 0xFF) {
@@ -247,7 +257,7 @@ void nes_handler_thread() {
     ps2famikb_init(0, NES_OUT, NES_JOY2OE, NES_DATA, ps2kbmode);
 
     
-    if (ps2kbmode == 1) {
+    if (ps2kbmode > 0) {
         for (;;) {
             //  read the current $4016 ouput
             uint8_t nesread = ps2famikb_readnes();
@@ -259,21 +269,28 @@ void nes_handler_thread() {
                 toggle = 0;
             } else if ((nesread & 2) != toggle) {   // increment keyboard row
                 toggle = nesread & 2;
-                select = (select + 1) % 18; //  wrap back to first row
+                if (ps2kbmode == 2) {   //  wrap back to first row
+                    select = (select + 1) % 26; // 26 blocks for subor
+                } else {
+                    select = (select + 1) % 18; // 18 blocks for famikb
+                }
             } 
 
             //  set current output value on $4017
             output = 0; //  if keyboard is not enabled return 0
             if (enable > 0) {
                 for (int i = (4 * select); i < (4 * select)+4; i++) {
-                    output = output << 1;
                     output += keymatrix[i];
+                    output = output << 1;
+                }
+                if (ps2kbmode == 2) {
+                    // append subor mouse data
                 }
             } 
             ps2famikb_putkb(output);
         }
 
-    } else if (ps2kbmode == 0) {
+    } else {
 
         for (;;) {
 
@@ -347,7 +364,7 @@ int main() {
     //  0: serialized mode
     //  1: famikb mode
     //  2: subor mode
-    //  3: ??
+    //  3: famikb+hori trackball
     ps2kbmode |= gpio_get(KB_MODE+1) << 1;
     ps2kbmode |= gpio_get(KB_MODE);
 
@@ -440,7 +457,7 @@ int main() {
                         }
                     }
 
-                    if (ps2kbmode == 1) {
+                    if (ps2kbmode == 1 || ps2kbmode == 3) { // famikey modes
                         // update the status of the key
                         for (uint8_t i = 0; i < sizeof(famikey); i++) {
                             if (famikey[i] == ascii) {
@@ -448,7 +465,15 @@ int main() {
                                 break;
                             }
                         }
-                    } else if (ps2kbmode == 0) {
+                    } else if (ps2kbmode == 2) { // subor mode
+                        // update the status of the key
+                        for (uint8_t i = 0; i < sizeof(suborkey); i++) {
+                            if (suborkey[i] == ascii) {
+                                keymatrix[i] = release;
+                                break;
+                            }
+                        }
+                    } else { // keyboard mouse host mode
                         // if the key is being released, add 0x80
                         if (!release && ascii > 0x00) {
                             ascii += 0x80;
