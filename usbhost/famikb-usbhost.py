@@ -9,6 +9,7 @@ i2cbus = 0
 # ntsc or pal - pal is always safe?
 pal = True
 # absolute or relative mouse updates
+# set False for subor and HoriTrack modes
 abs_mouse = True
 # send hold repeats
 hold_repeat = True

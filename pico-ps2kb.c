@@ -88,32 +88,32 @@ static const uint8_t famikey[] = {
     KEY_INSERT, KEY_BACKSPACE, KEY_SPACE, KEY_DOWN
 };
 static const uint8_t suborkey[] = {
-    KEY_4, KEY_G, KEY_F, KEY_C, 
-    KEY_F2, KEY_E, KEY_5, KEY_V,
-    KEY_2, KEY_D, KEY_S, KEY_END,
-    KEY_F1, KEY_W, KEY_3, KEY_X,
-    KEY_INSERT, KEY_BACKSPACE, KEY_PAGEDOWN, KEY_RIGHT, 
-    KEY_F8, KEY_PAGEUP, KEY_DELETE, KEY_HOME,
-    KEY_9, KEY_I, KEY_L, KEY_COMMA,
-    KEY_F5, KEY_O, KEY_0, KEY_DOT,
-    KEY_RIGHTBRACE, KEY_ENTER, KEY_UP, KEY_LEFT,
-    KEY_F7, KEY_LEFTBRACE, KEY_BACKSLASH, KEY_DOWN,
-    KEY_Q, KEY_CAPSLOCK, KEY_Z, KEY_TAB,
-    KEY_ESC, KEY_A, KEY_1, KEY_LEFTCTRL,
-    KEY_7, KEY_Y, KEY_K, KEY_M,
-    KEY_F4, KEY_U, KEY_8, KEY_J,
-    KEY_MINUS, KEY_SEMICOLON, KEY_APOSTROPHE, KEY_SLASH,
-    KEY_F6, KEY_P, KEY_EQUAL, KEY_LEFTSHIFT,
-    KEY_T, KEY_H, KEY_N, KEY_SPACE,
-    KEY_F3, KEY_R, KEY_6, KEY_B,
-    KEY_KP6, KEY_KPENTER, KEY_KP4, KEY_KP8,
-    KEY_KP2, 0x00, 0x00, 0x00,
-    KEY_LEFTALT, KEY_KP4, KEY_KP7, KEY_F11,
-    KEY_F12, KEY_KP1, KEY_KP2, KEY_KP8,
-    KEY_KPMINUS, KEY_KPPLUS, KEY_KPASTERISK, KEY_KP9,
-    KEY_F10, KEY_KP5, KEY_KPSLASH, KEY_NUMLOCK,
-    KEY_GRAVE, KEY_KP6, KEY_PAUSE, KEY_SPACE,
-    KEY_F9, KEY_KP3, KEY_KPDOT, KEY_KP0
+    KEY_C, KEY_F, KEY_G, KEY_4,
+    KEY_V, KEY_5, KEY_E, KEY_F2,
+    KEY_END, KEY_S, KEY_D, KEY_2,
+    KEY_X, KEY_3, KEY_W, KEY_F1,
+    KEY_RIGHT, KEY_PAGEDOWN, KEY_BACKSPACE, KEY_INSERT, 
+    KEY_HOME, KEY_DELETE, KEY_PAGEUP, KEY_F8,
+    KEY_COMMA, KEY_L, KEY_I, KEY_9, 
+    KEY_DOT, KEY_0, KEY_O, KEY_F5, 
+    KEY_LEFT, KEY_UP, KEY_ENTER, KEY_RIGHTBRACE, 
+    KEY_DOWN, KEY_BACKSLASH, KEY_LEFTBRACE, KEY_F7, 
+    KEY_TAB, KEY_Z, KEY_CAPSLOCK, KEY_Q,  
+    KEY_LEFTCTRL, KEY_1, KEY_A, KEY_ESC, 
+    KEY_M, KEY_K, KEY_Y, KEY_7, 
+    KEY_J, KEY_8, KEY_U, KEY_F4,  
+    KEY_SLASH, KEY_APOSTROPHE, KEY_SEMICOLON, KEY_MINUS, 
+    KEY_LEFTSHIFT, KEY_EQUAL, KEY_P, KEY_F6, 
+    KEY_SPACE, KEY_N, KEY_H, KEY_T,
+    KEY_B, KEY_6, KEY_R, KEY_F3, 
+    KEY_KP8, KEY_KP4, KEY_KPENTER, KEY_KP6,
+    0x00, 0x00, 0x00, KEY_KP2, // this is odd, verify
+    KEY_F11, KEY_KP7, KEY_KP4, KEY_LEFTALT, 
+    KEY_KP8, KEY_KP2, KEY_KP1, KEY_F12, 
+    KEY_KP9, KEY_KPASTERISK, KEY_KPPLUS, KEY_KPMINUS, 
+    KEY_NUMLOCK, KEY_KPSLASH, KEY_KP5, KEY_F10,  
+    KEY_SPACE, KEY_PAUSE, KEY_KP6, KEY_GRAVE,
+    KEY_KP0, KEY_KPDOT, KEY_KP3, KEY_F9 
 };
 
 
@@ -212,7 +212,8 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
                 for (uint8_t i = 0; i < sizeof(suborkey); i++) {
                     if (suborkey[i] == ascii) {
                         keymatrix[i] = state;
-                        break;
+                        // some keys appear more than once in the matrix
+                        //break;
                     }
                 }
             } else { // keyboard mouse host mode
@@ -222,24 +223,24 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
                     kbbackbuffer[kbbbindex] = hostmsg.mem[1];
                     kbbbindex = (kbbbindex + 1) % MAX_BUFFER;
                 }
-                // only update mouse buffer if mouse is "present"
-                if ((hostmsg.mem[2] & 32) == 0) {
-                    // and the first byte with the current value
-                    // this means if a button is pressed, it will stay "pressed"
-                    // until the NES polls it (probably next frame)
-                    msebuffer[0] = msebuffer[0] & hostmsg.mem[2];
-                    // if true, we are in relative mode
-                    if ((hostmsg.mem[2] & 8) == 0) {
-                        msebuffer[1] += hostmsg.mem[3];
-                        msebuffer[2] += hostmsg.mem[4];
-                    } else {
-                        msebuffer[1] = hostmsg.mem[3];
-                        msebuffer[2] = hostmsg.mem[4];   
-                    }
-                    // some wheel movements or middle button events could
-                    // be missed. target for improvement later
-                    msebuffer[3] = hostmsg.mem[5];
+            }
+            // only update mouse buffer if mouse is "present"
+            if ((hostmsg.mem[2] & 32) == 0) {
+                // and the first byte with the current value
+                // this means if a button is pressed, it will stay "pressed"
+                // until the NES polls it (probably next frame)
+                msebuffer[0] = msebuffer[0] & hostmsg.mem[2];
+                // if true, we are in relative mode
+                if ((hostmsg.mem[2] & 8) == 0) {
+                    msebuffer[1] += hostmsg.mem[3];
+                    msebuffer[2] += hostmsg.mem[4];
+                } else {
+                    msebuffer[1] = hostmsg.mem[3];
+                    msebuffer[2] = hostmsg.mem[4];   
                 }
+                // some wheel movements or middle button events could
+                // be missed. target for improvement later
+                msebuffer[3] = hostmsg.mem[5];
             }
             hostmsg.new_msg = true;
         }
@@ -262,11 +263,18 @@ void nes_handler_thread() {
             //  read the current $4016 ouput
             uint8_t nesread = ps2famikb_readnes();
             
+            // fami/subor keyboard enable
             enable = nesread & 4;
 
-            if ((nesread & 1) == 1) {  //  reset keyboard row 
+            if ((nesread & 1) == 1) {  //  reset keyboard row
+                // if the keyboard is enabled, reset it to prepare for reading 
                 select = 0;
                 toggle = 0;
+                // if subor or famikb+horitrack modes, prepare mouse data
+                if (ps2kbmode >= 2) {
+                    mseword = 0xFFFFFFFF;
+
+                }
             } else if ((nesread & 2) != toggle) {   // increment keyboard row
                 toggle = nesread & 2;
                 if (ps2kbmode == 2) {   //  wrap back to first row
@@ -283,10 +291,18 @@ void nes_handler_thread() {
                     output += keymatrix[i];
                     output = output << 1;
                 }
-                if (ps2kbmode == 2) {
-                    // append subor mouse data
-                }
+                
             } 
+            if (ps2kbmode == 2) {
+                // append subor mouse data
+                // output |= (mseword & 0x80000000) >> 31;
+            }
+
+            // required for subor mouse
+            //if (ps2famikb_chkstrobe()) {
+            //    mseword = mseword << 1;
+            //}
+
             ps2famikb_putkb(output);
         }
 
@@ -470,7 +486,8 @@ int main() {
                         for (uint8_t i = 0; i < sizeof(suborkey); i++) {
                             if (suborkey[i] == ascii) {
                                 keymatrix[i] = release;
-                                break;
+                                // some keys appear more than once in the matrix
+                                //break;
                             }
                         }
                     } else { // keyboard mouse host mode
