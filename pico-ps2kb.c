@@ -5,6 +5,9 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
+#pragma GCC push_options
+#pragma GCC optimize("-O3")
+
 #include <stdio.h>
 #include <hardware/i2c.h>
 #include <pico/i2c_slave.h>
@@ -12,6 +15,8 @@
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 #include "hardware/gpio.h"
+#include "hardware/pio.h"
+#include "hardware/irq.h"
 
 #include "ps2kbd.h"
 #include "stdinit.h"
@@ -52,7 +57,7 @@
 #define WORD_SIZE 4
 
 // keypress matrix for family basic mode & suborkb
-static uint8_t keymatrix[] = {
+static bool keymatrix[] = {
     0, 0, 0, 0, 0, 0, 0, 0, // 0 0, 0 1
     0, 0, 0, 0, 0, 0, 0, 0, // 1 0, 1 1
     0, 0, 0, 0, 0, 0, 0, 0, // 2 0, 2 1
@@ -138,7 +143,9 @@ static uint8_t kbbackbuffer[MAX_BUFFER];
 static uint8_t transbbindex = 0;
 // mouse updates won't be buffered like the keyboard, if multiple updates come
 // inbetween a frame, we want to put them together instead of stack them up
-static uint8_t msebuffer[4];
+static int8_t msebuffer[4];
+static int8_t mousex;
+static int8_t mousey;
 
 static bool NESinlatch = false;
 
@@ -153,9 +160,15 @@ static uint32_t output = 0;
 static uint8_t select = 0;
 static uint8_t enable = 0;
 static uint8_t toggle = 0;
+static uint8_t setoe2 = 0;
+static bool instrobe = false;
 
 static uint32_t kbword = 0;
 static uint32_t mseword = 0;
+
+static uint8_t subormouse[4]; // three byte holder for subor mouse data (one byte pad)
+static uint8_t sbmouseindex = 0;
+static uint8_t sbmouselength = 0; // should be 1 or 3 each report
 
 // I2C configuration
 static const uint I2C_ADDRESS = 0x17;
@@ -182,8 +195,8 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
             if (hostmsg.garbage_message) {
                 i2c_read_byte_raw(i2c);
             }
-            else { // bitwise NOT the values into buffer
-                hostmsg.mem[hostmsg.mem_address] = ~i2c_read_byte_raw(i2c);
+            else { // put thew values into buffer
+                hostmsg.mem[hostmsg.mem_address] = i2c_read_byte_raw(i2c);
                 hostmsg.mem_address = (hostmsg.mem_address + 1) % 6;
             }
         }
@@ -195,43 +208,43 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
         break;
     case I2C_SLAVE_FINISH: // master has signalled Stop / Restart
         if (!hostmsg.garbage_message) {
-            if (ps2kbmode == 1 || ps2kbmode == 3) {
-                // famikey modes
-                int state = hostmsg.mem[1] >> 7;
-                int ascii = (~hostmsg.mem[1]) & 127;
-                for (uint8_t i = 0; i < sizeof(famikey); i++) {
-                    if (famikey[i] == ascii) {
-                        keymatrix[i] = state;
-                        break;
+            // parse the value from mem[1] if not 0x00
+            if (hostmsg.mem[1] != 0x00) {
+                if (ps2kbmode == 1 || ps2kbmode == 3) {
+                    // famikey modes
+                    bool state = (hostmsg.mem[1] >> 7) ? 0: 1;
+                    uint8_t ascii = hostmsg.mem[1] & 127;
+                    for (int i = 0; i < sizeof(famikey); i++) {
+                        if (famikey[i] == ascii) {
+                            keymatrix[i] = state;
+                            break;
+                        }
                     }
-                }
-            } else if (ps2kbmode == 2) {
-                // subor mode
-                int state = hostmsg.mem[1] >> 7;
-                int ascii = (~hostmsg.mem[1]) & 127;
-                for (uint8_t i = 0; i < sizeof(suborkey); i++) {
-                    if (suborkey[i] == ascii) {
-                        keymatrix[i] = state;
-                        // some keys appear more than once in the matrix
-                        //break;
+                } else if (ps2kbmode == 2) {
+                    // subor mode
+                    bool state = (hostmsg.mem[1] >> 7) ? 0: 1;
+                    uint8_t ascii = hostmsg.mem[1] & 127;
+                    for (int i = 0; i < sizeof(suborkey); i++) {
+                        if (suborkey[i] == ascii) {
+                            keymatrix[i] = state;
+                            // some keys appear more than once in the matrix
+                            //break;
+                        }
                     }
-                }
-            } else { // keyboard mouse host mode
-                // read the value from mem[1] for keyboard to buffer if not ~0x00
-                // shouldn't need to check if keyboard is "present" for this
-                if (hostmsg.mem[1] != 0xFF) {
+                } else { // keyboard mouse host mode
+                    // shouldn't need to check if keyboard is "present" for this
                     kbbackbuffer[kbbbindex] = hostmsg.mem[1];
                     kbbbindex = (kbbbindex + 1) % MAX_BUFFER;
                 }
             }
             // only update mouse buffer if mouse is "present"
-            if ((hostmsg.mem[2] & 32) == 0) {
+            if ((hostmsg.mem[2] & 32) == 32) {
                 // and the first byte with the current value
                 // this means if a button is pressed, it will stay "pressed"
                 // until the NES polls it (probably next frame)
-                msebuffer[0] = msebuffer[0] & hostmsg.mem[2];
+                msebuffer[0] = msebuffer[0] | hostmsg.mem[2];
                 // if true, we are in relative mode
-                if ((hostmsg.mem[2] & 8) == 0) {
+                if ((msebuffer[0] & 8) == 8 && hostmsg.new_msg) {
                     msebuffer[1] += hostmsg.mem[3];
                     msebuffer[2] += hostmsg.mem[4];
                 } else {
@@ -253,27 +266,147 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
     }
 }
 
+void pio_IRQ_handler() {
+
+    if (pio_interrupt_get(pio0, 3)) {
+        if (ps2kbmode == 2) {
+            // move the subor mouse data along
+            subormouse[sbmouseindex] = subormouse[sbmouseindex] << 1;
+        }
+        else if (ps2kbmode == 0) {
+            mseword = mseword << 1;
+            kbword = kbword << 1;
+        }
+
+        pio_interrupt_clear(pio0, 3);
+    }
+}
+
+
 void nes_handler_thread() {
 
-    ps2famikb_init(0, NES_OUT, NES_JOY2OE, NES_DATA, ps2kbmode);
+    ps2famikb_init(NES_OUT, NES_JOY2OE, NES_DATA, ps2kbmode);
 
     
     if (ps2kbmode > 0) {
+
+        if (ps2kbmode >= 2) {
+            pio_set_irq0_source_enabled(pio0, pis_interrupt3, true);
+            irq_set_exclusive_handler(PIO0_IRQ_0, pio_IRQ_handler);
+        }
+        irq_set_enabled(PIO0_IRQ_0, true);
+
         for (;;) {
             //  read the current $4016 ouput
-            uint8_t nesread = ps2famikb_readnes();
+            uint8_t nesread = (pio0->intr >> 8) & 0x0F;
             
             // fami/subor keyboard enable
             enable = nesread & 4;
 
-            if ((nesread & 1) == 1) {  //  reset keyboard row
+            // read the strobe value, if was previously in strobe
+            // exit strobe if no longer in strobe
+            uint8_t strobe = nesread & 1;
+            if (!strobe && instrobe) {
+                instrobe = false;
+            }
+            
+            // only reset/prepare data if beginning of strobe
+            if (strobe && !instrobe) {  //  reset keyboard row/strobe mouse
+                instrobe = true;
                 // if the keyboard is enabled, reset it to prepare for reading 
                 select = 0;
                 toggle = 0;
-                // if subor or famikb+horitrack modes, prepare mouse data
-                if (ps2kbmode >= 2) {
-                    mseword = 0xFFFFFFFF;
 
+                // if there is new data, load it
+                // otherwise, give a 0
+                if (hostmsg.new_msg) {
+                    mousex = msebuffer[1];
+                    mousey = msebuffer[2];
+                } else {
+                    mousex = mousey = 0x00;
+                }
+
+                // if subor or famikb+horitrack modes, prepare mouse data
+                if (ps2kbmode == 2) {
+                    // progress index if less than length
+                    if (sbmouseindex < sbmouselength) {
+                        sbmouseindex++;
+                    }
+
+                    // if index is equal to length, time to make a new report
+                    if (sbmouseindex == sbmouselength) {
+                        // reset index
+                        sbmouseindex = 0;
+                        sbmouselength = 0;
+                        
+                        if (!enable) {
+                            // it is a single byte report
+                            if ((mousex >= -1 && mousex <= 1) && (mousey >= -1 && mousey <= 1)) {
+                                sbmouselength = 1;
+                                subormouse[0] = subormouse[1] = subormouse[2] = 0x00;
+
+                                // set mouse left/right buttons
+                                subormouse[0] |= (uint8_t) msebuffer[0] & 0xC0;
+                                // mouse X/Y reports
+                                subormouse[0] |= (mousex & 0x03) << 4;
+                                subormouse[0] |= (mousey & 0x03) << 2;
+                                // byte identifier
+                                //subormouse[0] += 0x00; 
+                            } else {
+                                sbmouselength = 3;
+                                uint8_t xdir = 0;
+                                uint8_t ydir = 0;
+
+                                // clamp movement to maximum "31" and set dir
+                                if (mousex < 0) {
+                                    xdir = 1;                
+                                    mousex *= (int8_t)-1;
+                                }
+                                if (mousey < 0) {
+                                    ydir = 1;                
+                                    mousey *= (int8_t)-1;
+                                }
+                                if (mousex > 31) {
+                                    mousex = 31;
+                                }
+                                if (mousey > 31) {
+                                    mousey = 31;
+                                }
+
+                                // first byte
+                                subormouse[0] = 0x00;
+                                subormouse[0] |= msebuffer[0] & 0xC0;
+                                subormouse[0] |= xdir << 5;
+                                subormouse[0] |= mousex & 0x10;
+                                subormouse[0] |= ydir << 3;
+                                subormouse[0] |= (mousey & 0x10) >> 2;
+                                subormouse[0] |= 0x01;
+
+                                // second byte
+                                subormouse[1] = 0x00;
+                                subormouse[1] |= (mousex & 0x0F) << 2;
+                                subormouse[1] |= 0x02;
+
+                                // third byte
+                                subormouse[2] = 0x00;
+                                subormouse[2] |= (mousey & 0x0F) << 2;
+                                subormouse[2] |= 0x03;
+
+                            }
+
+                            // if there is new data from the host
+                            if (hostmsg.new_msg) {
+                                // actually update button values
+                                msebuffer[0] = hostmsg.mem[2];
+                                
+                                hostmsg.new_msg = false;
+                            }
+
+                            
+                            msebuffer[3] = msebuffer[3] | 127; 
+                        }
+
+                    }
                 }
             } else if ((nesread & 2) != toggle) {   // increment keyboard row
                 toggle = nesread & 2;
@@ -282,7 +415,7 @@ void nes_handler_thread() {
                 } else {
                     select = (select + 1) % 18; // 18 blocks for famikb
                 }
-            } 
+            }
 
             //  set current output value on $4017
             output = 0; //  if keyboard is not enabled return 0
@@ -291,32 +424,41 @@ void nes_handler_thread() {
                     output += keymatrix[i];
                     output = output << 1;
                 }
-                
-            } 
-            if (ps2kbmode == 2) {
-                // append subor mouse data
-                // output |= (mseword & 0x80000000) >> 31;
             }
 
-            // required for subor mouse
-            //if (ps2famikb_chkstrobe()) {
-            //    mseword = mseword << 1;
-            //}
+            if (ps2kbmode == 2) {
+                // append subor mouse data
+                output += (subormouse[sbmouseindex] >> 7) ? 0: 1;
+            }
 
             ps2famikb_putkb(output);
         }
 
     } else {
 
+        pio_set_irq0_source_enabled(pio0, pis_interrupt3, true);
+        irq_set_exclusive_handler(PIO0_IRQ_0, pio_IRQ_handler);
+        irq_set_enabled(PIO0_IRQ_0, true);
+
         for (;;) {
 
-            // check for latch signal and latch the buffers
-            if (ps2famikb_chklatch()) {
+            uint8_t nesread = (pio0->intr >> 8) & 0x0F;
+            
+            // read the strobe value, if was previously in strobe
+            // exit strobe if no longer in strobe
+            uint8_t strobe = nesread & 1;
+            if (!strobe && instrobe) {
+                instrobe = false;
+            }
+
+            // check for strobe signal and latch the buffers
+            if (strobe && !instrobe) {  //  reset keyboard row/strobe mouse
+                instrobe = true;
                 // check if latched for buffer context
                 NESinlatch = true;
 
-                kbword = 0xFFFFFFFF;
-                mseword = 0xFFFFFFFF;
+                kbword = 0x00000000;
+                mseword = 0x00000000;
                 // load the four oldest buffered values
                 for (int i = 0; i < WORD_SIZE; i++) {
                     kbword = kbword << 8;
@@ -324,7 +466,7 @@ void nes_handler_thread() {
                     // mouse doesn't actually have a history
                     // just get the latest values
                     mseword = mseword << 8;
-                    mseword += msebuffer[i];
+                    mseword += (uint8_t) msebuffer[i];
                 }
                 int c = WORD_SIZE;
                 if (bufferindex < WORD_SIZE) {
@@ -337,30 +479,21 @@ void nes_handler_thread() {
 
                 // if there is new data from the host
                 if (hostmsg.new_msg) {
-                    // actually update button values
+                    // actually update all values
                     msebuffer[0] = hostmsg.mem[2];
                     hostmsg.new_msg = false;
                 }
 
-                // reset relative values in buffer
-                if ((msebuffer[0] & 8) == 0) {
-                    msebuffer[1] = msebuffer[2] = 0xFF;
-                }
-                msebuffer[3] = msebuffer[3] | 127; 
+                msebuffer[3] = msebuffer[3] & 128; 
 
                 NESinlatch = false;
             }
 
-            if (ps2famikb_chkstrobe()) {
-                mseword = mseword << 1;
-                kbword = kbword << 1;
-            }
-
             uint32_t serialout = 0;
             // push next mouse bit in
-            serialout += (mseword & 0x80000000) >> 30;
+            serialout += (~mseword & 0x80000000) >> 30;
             // push the next keyboard bit in
-            serialout += (kbword & 0x80000000) >> 31;
+            serialout += (~kbword & 0x80000000) >> 31;
 
             ps2famikb_putkb(serialout);
 
@@ -371,7 +504,7 @@ void nes_handler_thread() {
 
 int main() {
     set_sys_clock_khz(270000, true);
-
+    //stdio_init();
     //  configure pico-ps2kb based on gpio
     gpio_init(KB_MODE); gpio_init(KB_MODE+1);
     gpio_set_dir(KB_MODE, GPIO_IN); gpio_set_dir(KB_MODE+1, GPIO_IN);
@@ -392,15 +525,16 @@ int main() {
 
     // prepare buffers
     for (int i = 0; i < MAX_BUFFER; i++) {
-        keybuffer[i] = 0xFF;
+        keybuffer[i] = 0x00;
     }
     for (int i = 1; i < 4; i++) {
-        msebuffer[i] = 0xFF;
+        msebuffer[i] = 0x00;
+        subormouse[i-1] = 0x00;
     }
     // set only the device id in the buffer so if the NES
     // strobes for update before data received it will know
     // the interface is present
-    msebuffer[0] = 0xF9;
+    msebuffer[0] = 0x06;
 
     //  run the NES handler on seperate core
     multicore_launch_core1(nes_handler_thread);

@@ -131,6 +131,8 @@ with SMBus(i2cbus) as bus:
 			# https://forums.nesdev.org/viewtopic.php?p=248338#p248338
 			for key, mask in selector.select():
 				msg = [0,0,0,0,0]
+				if not abs_mouse:
+					mousepos = [0,0]
 				doupdate = False
 				thisdev = key.fileobj
 				for event in thisdev.read():
@@ -142,10 +144,13 @@ with SMBus(i2cbus) as bus:
 							# check if mouse buttons first
 							if "BTN_LEFT" in ev.ecodes.keys[event.code]:
 								mousebtn[0] = event.value
+								doupdate = True
 							elif ev.ecodes.keys[event.code] == "BTN_MIDDLE":
 								mousebtn[1] = event.value
+								doupdate = True
 							elif ev.ecodes.keys[event.code] == "BTN_RIGHT":
 								mousebtn[2] = event.value
+								doupdate = True
 							elif ev.ecodes.keys[event.code] in keymap:
 								if hold_repeat or event.value < 2:
 									msg[0] = keymap[ev.ecodes.keys[event.code]]
