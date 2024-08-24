@@ -2,7 +2,7 @@
 
 .wrap_target
 pull            ; wait for data from the program
-out pins, 4     ; put that data on $4017
+out pins, 5     ; put that data on $4017
 .wrap
 
 

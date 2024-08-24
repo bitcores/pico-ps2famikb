@@ -4,7 +4,7 @@
 extern "C" {
 #endif
 
-void ps2famikb_init(uint pio, uint nesin_gpio, uint nesoe_gpio, uint kbout_gpio, bool kbmode);
+void ps2famikb_init(uint nesin_gpio, uint nesoe_gpio, uint kbout_gpio, uint kbmode);
 
 uint8_t ps2famikb_readnes(void);
 
