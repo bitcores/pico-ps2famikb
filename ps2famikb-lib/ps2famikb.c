@@ -32,7 +32,7 @@ static uint8_t kbrst = 0;
 
 static bool latchstate = false;
 
-void ps2famikb_init(uint nesin_gpio, uint nesoe_gpio, uint kbout_gpio, uint kbmode) {
+void ps2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint kbout_gpio, uint kbmode) {
 
     // set up the input side second because we may be stuck here
     nesin_pio = pio0;
@@ -107,71 +107,38 @@ void ps2famikb_init(uint nesin_gpio, uint nesoe_gpio, uint kbout_gpio, uint kbmo
     }
 
     if (kbmode == 0 || kbmode == 2) { // set up the NES input PIO on OE from $4017
-        gpio_init(nesoe_gpio);
-        gpio_pull_up(nesoe_gpio);
+        gpio_init(nesoe2_gpio);
+        gpio_pull_up(nesoe2_gpio);
 
         nesoe_sm = pio_claim_unused_sm(nesin_pio, true);
-        uint nesoeos = pio_add_program(nesin_pio, &nesoe2_program);
-        pio_sm_set_consecutive_pindirs(nesin_pio, nesoe_sm, nesoe_gpio, 1, false);
+        uint nesoeos = pio_add_program(nesin_pio, &nesoe_program);
+        pio_sm_set_consecutive_pindirs(nesin_pio, nesoe_sm, nesoe2_gpio, 1, false);
         pio_sm_config nesoec = nesoe_program_get_default_config(nesoeos);
-        sm_config_set_in_pins(&nesoec, nesoe_gpio);
+        sm_config_set_in_pins(&nesoec, nesoe2_gpio);
         sm_config_set_in_shift(&nesoec, false, false, 32);
         pio_sm_init(nesin_pio, nesoe_sm, nesoeos, &nesoec);
         pio_sm_set_enabled(nesin_pio, nesoe_sm, true);
     }
 
-    // will also need OE1 from $4016 for horitrack, mode 3
+    if (kbmode == 3) { // set up the NES input PIO on OE from $4016
+        gpio_init(nesoe1_gpio);
+        gpio_pull_up(nesoe1_gpio);
+
+        nesoe_sm = pio_claim_unused_sm(nesin_pio, true);
+        uint nesoeos = pio_add_program(nesin_pio, &nesoe_program);
+        pio_sm_set_consecutive_pindirs(nesin_pio, nesoe_sm, nesoe1_gpio, 1, false);
+        pio_sm_config nesoec = nesoe_program_get_default_config(nesoeos);
+        sm_config_set_in_pins(&nesoec, nesoe1_gpio);
+        sm_config_set_in_shift(&nesoec, false, false, 32);
+        pio_sm_init(nesin_pio, nesoe_sm, nesoeos, &nesoec);
+        pio_sm_set_enabled(nesin_pio, nesoe_sm, true);
+    }
 
 }
 
-uint8_t ps2famikb_readnes(void) {
-    uint8_t readin = 0;
-    if (!(pio_sm_is_rx_fifo_empty(nesin_pio, neskben_sm))) {
-        kben = pio_sm_get(nesin_pio, neskben_sm);
-        //pio_sm_clear_fifos(nesin_pio, neskben_sm);
-    }
-    readin = (readin + kben) << 1;
-
-    if (!(pio_sm_is_rx_fifo_empty(nesin_pio, neskbadv_sm))) {
-        kbadv = pio_sm_get(nesin_pio, neskbadv_sm);     
-        //pio_sm_clear_fifos(nesin_pio, neskbadv_sm);
-    }
-    readin = (readin + kbadv) << 1;
-
-    if (!(pio_sm_is_rx_fifo_empty(nesin_pio, neskbrst_sm))) {
-        kbrst = pio_sm_get(nesin_pio, neskbrst_sm);
-        //pio_sm_clear_fifos(nesin_pio, neskbrst_sm);
-    }
-    readin += kbrst;
-    
-    return readin;   
-}
-
+// putting output on the data lines
 void ps2famikb_putkb(uint32_t kbcode) {
     pio_sm_put(kbout_pio, kbout_sm, kbcode);
     pio_sm_clear_fifos(kbout_pio, kbout_sm);
 }
 
-bool ps2famikb_chkstrobe(void) {
-    if (!(pio_sm_is_rx_fifo_empty(nesin_pio, nesoe_sm))) {
-        //pio_sm_get(nesin_pio, nesoe_sm);
-        pio_sm_clear_fifos(nesin_pio, nesoe_sm);
-        return true;
-    }
-    return false;
-}
-
-bool ps2famikb_chklatch(void) {
-    if (!(pio_sm_is_rx_fifo_empty(nesin_pio, neskbrst_sm))) {
-        if (pio_sm_get(nesin_pio, neskbrst_sm)) {
-            if (!latchstate) {
-                latchstate = true;
-                return true;
-            }
-        } else {
-            latchstate = false;
-        }
-        return false;
-    }
-    return false;
-}
