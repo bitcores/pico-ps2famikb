@@ -142,3 +142,4 @@ void ps2famikb_putkb(uint32_t kbcode) {
     pio_sm_clear_fifos(kbout_pio, kbout_sm);
 }
 
+#pragma GCC pop_options

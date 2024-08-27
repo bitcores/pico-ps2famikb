@@ -257,7 +257,7 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
                 }
                 // some wheel movements or middle button events could
                 // be missed. target for improvement later
-                msebuffer[3] = hostmsg.mem[5];
+                msebuffer[3] |= hostmsg.mem[5];
             }
             hostmsg.new_msg = true;
         }
@@ -406,12 +406,10 @@ void nes_handler_thread() {
                             if (hostmsg.new_msg) {
                                 // actually update button values
                                 msebuffer[0] = hostmsg.mem[2];
-                                
+                                msebuffer[3] = hostmsg.mem[5];
                                 hostmsg.new_msg = false;
                             }
-
-                            
-                            msebuffer[3] = msebuffer[3] | 127; 
+ 
                         }
 
                     }
@@ -432,20 +430,18 @@ void nes_handler_thread() {
                     horitrack |= (~mousey) & 0x0F;
                     horitrack <<= 4;
                     horitrack |= (~mousex) & 0x0F;
-                    horitrack <<= 8;
-                    horitrack |= 0x90;
-                    horitrack <<= 8;
+                    horitrack <<= 4;
+                    horitrack |= ((msebuffer[3] & 0x03) << 2) + 1;
+                    horitrack <<= 12;
 
                     // if there is new data from the host
                     if (hostmsg.new_msg) {
                         // actually update button values
                         msebuffer[0] = hostmsg.mem[2];
-                        
+                        msebuffer[3] = hostmsg.mem[5];
                         hostmsg.new_msg = false;
                     }
 
-                    
-                    msebuffer[3] = msebuffer[3] | 127; 
                 }
             } else if ((nesread & 2) != toggle) {   // increment keyboard row
                 toggle = nesread & 2;
@@ -522,10 +518,9 @@ void nes_handler_thread() {
                 if (hostmsg.new_msg) {
                     // actually update all values
                     msebuffer[0] = hostmsg.mem[2];
+                    msebuffer[3] = hostmsg.mem[5];
                     hostmsg.new_msg = false;
                 }
-
-                msebuffer[3] = msebuffer[3] & 128; 
 
                 NESinlatch = false;
             }
@@ -698,3 +693,5 @@ int main() {
     }
 
 }
+
+#pragma GCC pop_options
