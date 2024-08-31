@@ -270,6 +270,17 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
     }
 }
 
+// when mouse data is sent to the NES, update relevant buffer data
+static void update_mouse_data() {
+    // if there is new data from the host
+    if (hostmsg.new_msg) {
+        // actually update button values
+        msebuffer[0] = hostmsg.mem[2];
+        msebuffer[3] = hostmsg.mem[5];
+        hostmsg.new_msg = false;
+    }
+}
+
 // IRQ handler for OE lines to shift data
 void pio_IRQ_handler() {
 
@@ -366,16 +377,16 @@ void nes_handler_thread() {
                                 uint8_t ydir = 0;
 
                                 // clamp movement to maximum "31" and set dir
-                                if (mousex < 0) {
-                                    xdir = 1;                
-                                    mousex *= (int8_t)-1;
-                                }
-                                if (mousey < 0) {
-                                    ydir = 1;                
-                                    mousey *= (int8_t)-1;
+                                xdir = (mousex & 0x80) >> 7;
+                                ydir = (mousey & 0x80) >> 7;
+                                if (xdir) {
+                                    mousex = ~mousex;
                                 }
                                 if (mousex > 31) {
                                     mousex = 31;
+                                }
+                                if (ydir) {
+                                    mousey = ~mousey;
                                 }
                                 if (mousey > 31) {
                                     mousey = 31;
@@ -402,13 +413,7 @@ void nes_handler_thread() {
 
                             }
 
-                            // if there is new data from the host
-                            if (hostmsg.new_msg) {
-                                // actually update button values
-                                msebuffer[0] = hostmsg.mem[2];
-                                msebuffer[3] = hostmsg.mem[5];
-                                hostmsg.new_msg = false;
-                            }
+                            update_mouse_data();
  
                         }
 
@@ -434,13 +439,7 @@ void nes_handler_thread() {
                     horitrack |= ((msebuffer[3] & 0x03) << 2) + 1;
                     horitrack <<= 12;
 
-                    // if there is new data from the host
-                    if (hostmsg.new_msg) {
-                        // actually update button values
-                        msebuffer[0] = hostmsg.mem[2];
-                        msebuffer[3] = hostmsg.mem[5];
-                        hostmsg.new_msg = false;
-                    }
+                    update_mouse_data();
 
                 }
             } else if ((nesread & 2) != toggle) {   // increment keyboard row
@@ -514,13 +513,7 @@ void nes_handler_thread() {
                 }
                 bufferindex = bufferindex - c;
 
-                // if there is new data from the host
-                if (hostmsg.new_msg) {
-                    // actually update all values
-                    msebuffer[0] = hostmsg.mem[2];
-                    msebuffer[3] = hostmsg.mem[5];
-                    hostmsg.new_msg = false;
-                }
+                update_mouse_data();
 
                 NESinlatch = false;
             }
