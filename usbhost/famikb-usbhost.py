@@ -201,8 +201,8 @@ with SMBus(i2cbus) as bus:
 					msg[2] = mousepos[0]
 					msg[3] = mousepos[1]
 					msg[4] += 128 if mousebtn[1] else 0
-                    msg[4] += 2 if Lhandedness else 0
-                    msg[4] += 1 if lowspeed else 0
+					msg[4] += 2 if Lhandedness else 0
+					msg[4] += 1 if lowspeed else 0
 					# ignore forth byte for now
 					#print(msg)
 					bus.write_block_data(23, 0, msg)
