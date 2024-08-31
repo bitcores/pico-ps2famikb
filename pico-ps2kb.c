@@ -29,6 +29,8 @@
 #define NES_OUT 2
 // $4017 OE $4017 strobe read
 #define NES_JOY2OE 10
+// $4016 OE $4016 strobe read
+#define NES_JOY1OE 11
 // $4017 "data" lines, five consecutive pins
 #define NES_DATA 5
 
@@ -170,6 +172,8 @@ static uint8_t subormouse[4]; // three byte holder for subor mouse data (one byt
 static uint8_t sbmouseindex = 0;
 static uint8_t sbmouselength = 0; // should be 1 or 3 each report
 
+static uint32_t horitrack = 0;
+
 // I2C configuration
 static const uint I2C_ADDRESS = 0x17;
 static const uint I2C_BAUDRATE = 100000; // 100 kHz
@@ -253,7 +257,7 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
                 }
                 // some wheel movements or middle button events could
                 // be missed. target for improvement later
-                msebuffer[3] = hostmsg.mem[5];
+                msebuffer[3] |= hostmsg.mem[5];
             }
             hostmsg.new_msg = true;
         }
@@ -266,6 +270,18 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
     }
 }
 
+// when mouse data is sent to the NES, update relevant buffer data
+static void update_mouse_data() {
+    // if there is new data from the host
+    if (hostmsg.new_msg) {
+        // actually update button values
+        msebuffer[0] = hostmsg.mem[2];
+        msebuffer[3] = hostmsg.mem[5];
+        hostmsg.new_msg = false;
+    }
+}
+
+// IRQ handler for OE lines to shift data
 void pio_IRQ_handler() {
 
     if (pio_interrupt_get(pio0, 3)) {
@@ -277,6 +293,9 @@ void pio_IRQ_handler() {
             mseword = mseword << 1;
             kbword = kbword << 1;
         }
+        else if (ps2kbmode == 3) {
+            horitrack = horitrack << 1;
+        }
 
         pio_interrupt_clear(pio0, 3);
     }
@@ -285,7 +304,7 @@ void pio_IRQ_handler() {
 
 void nes_handler_thread() {
 
-    ps2famikb_init(NES_OUT, NES_JOY2OE, NES_DATA, ps2kbmode);
+    ps2famikb_init(NES_OUT, NES_JOY1OE, NES_JOY2OE, NES_DATA, ps2kbmode);
 
     
     if (ps2kbmode > 0) {
@@ -358,16 +377,16 @@ void nes_handler_thread() {
                                 uint8_t ydir = 0;
 
                                 // clamp movement to maximum "31" and set dir
-                                if (mousex < 0) {
-                                    xdir = 1;                
-                                    mousex *= (int8_t)-1;
-                                }
-                                if (mousey < 0) {
-                                    ydir = 1;                
-                                    mousey *= (int8_t)-1;
+                                xdir = (mousex & 0x80) >> 7;
+                                ydir = (mousey & 0x80) >> 7;
+                                if (xdir) {
+                                    mousex = ~mousex;
                                 }
                                 if (mousex > 31) {
                                     mousex = 31;
+                                }
+                                if (ydir) {
+                                    mousey = ~mousey;
                                 }
                                 if (mousey > 31) {
                                     mousey = 31;
@@ -394,19 +413,34 @@ void nes_handler_thread() {
 
                             }
 
-                            // if there is new data from the host
-                            if (hostmsg.new_msg) {
-                                // actually update button values
-                                msebuffer[0] = hostmsg.mem[2];
-                                
-                                hostmsg.new_msg = false;
-                            }
-
-                            
-                            msebuffer[3] = msebuffer[3] | 127; 
+                            update_mouse_data();
+ 
                         }
 
                     }
+                } else if (ps2kbmode == 3) {
+                    horitrack = 0x00;
+                    horitrack |= msebuffer[0] & 0xC0;
+                    horitrack <<= 4;
+                    if (mousex < -8) {
+                        mousex = -8;
+                    } else if (mousex > 7) {
+                        mousex = 7;
+                    }
+                    if (mousey < -8) {
+                        mousey = -8;
+                    } else if (mousey > 7) {
+                        mousey = 7;
+                    }
+                    horitrack |= (~mousey) & 0x0F;
+                    horitrack <<= 4;
+                    horitrack |= (~mousex) & 0x0F;
+                    horitrack <<= 4;
+                    horitrack |= ((msebuffer[3] & 0x03) << 2) + 1;
+                    horitrack <<= 12;
+
+                    update_mouse_data();
+
                 }
             } else if ((nesread & 2) != toggle) {   // increment keyboard row
                 toggle = nesread & 2;
@@ -429,6 +463,8 @@ void nes_handler_thread() {
             if (ps2kbmode == 2) {
                 // append subor mouse data
                 output += (subormouse[sbmouseindex] >> 7) ? 0: 1;
+            } else if (ps2kbmode == 3) {
+                output += (horitrack >> 31) ? 0: 1;
             }
 
             ps2famikb_putkb(output);
@@ -477,14 +513,7 @@ void nes_handler_thread() {
                 }
                 bufferindex = bufferindex - c;
 
-                // if there is new data from the host
-                if (hostmsg.new_msg) {
-                    // actually update all values
-                    msebuffer[0] = hostmsg.mem[2];
-                    hostmsg.new_msg = false;
-                }
-
-                msebuffer[3] = msebuffer[3] & 128; 
+                update_mouse_data();
 
                 NESinlatch = false;
             }
@@ -657,3 +686,5 @@ int main() {
     }
 
 }
+
+#pragma GCC pop_options

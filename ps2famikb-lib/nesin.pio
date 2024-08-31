@@ -14,20 +14,9 @@
     
 .wrap
 
+
 .program nesoe
-; monitor joypad 2 OE to strobe output
-.wrap_target
-
-    wait 0 pin 0 [5]
-    nop [1]
-    wait 1 pin 0 [5]
-    in pins, 1
-    push   
-    
-.wrap
-
-.program nesoe2
-; monitor joypad 2 OE to strobe output
+; monitor joypad 1/2 OE to strobe output
 ; send wait interrupt 
 .wrap_target
 

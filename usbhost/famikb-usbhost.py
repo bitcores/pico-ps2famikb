@@ -14,6 +14,12 @@ abs_mouse = True
 # send hold repeats
 hold_repeat = True
 
+# Hori Track options
+# L or R handedness (default is L)
+Lhandedness = True
+# low or high speed mode
+lowspeed = True
+
 os.system('clear')
 
 activekb = None
@@ -178,10 +184,7 @@ with SMBus(i2cbus) as bus:
 								elif ev.ecodes.REL[event.code] == "REL_Y":
 									mousepos[1] = c_int8(event.value).value
 							if ev.ecodes.REL[event.code] == "REL_WHEEL":
-								whl = event.value
-								if event.value < 0:
-									whl = ((whl *-1 - 1)^15)&15
-								msg[4] += whl << 3
+								msg[4] += (c_int8(event.value).value & 0x0F) << 3
 							#print("mouse cursor at: ", mousepos, mousebtn)
 					except:
 						print(event)
@@ -198,6 +201,8 @@ with SMBus(i2cbus) as bus:
 					msg[2] = mousepos[0]
 					msg[3] = mousepos[1]
 					msg[4] += 128 if mousebtn[1] else 0
+                    msg[4] += 2 if Lhandedness else 0
+                    msg[4] += 1 if lowspeed else 0
 					# ignore forth byte for now
 					#print(msg)
 					bus.write_block_data(23, 0, msg)
