@@ -168,8 +168,8 @@ with SMBus(i2cbus) as bus:
 									capture_combo[1] = 1 if event.value > 0 else 0
 								elif ev.ecodes.keys[event.code] == "KEY_ESC":
 									capture_combo[2] = 1 if event.value > 0 else 0
-							if not msg[0] == 0:
-								doupdate = True
+								if not msg[0] == 0:
+									doupdate = True
 						elif et == ev.ecodes.EV_REL:
 							doupdate = True
 							#print(ev.ecodes.REL[event.code], event.value)
@@ -180,9 +180,15 @@ with SMBus(i2cbus) as bus:
 									mousepos[1] = min(ntscpal[pal]-1, max(0, mousepos[1]+event.value))
 							else:
 								if ev.ecodes.REL[event.code] == "REL_X":
-									mousepos[0] = c_int8(event.value).value
+									if event.value < 0:
+										mousepos[0] = max(-128, event.value)
+									else:
+										mousepos[0] = min(127, event.value)
 								elif ev.ecodes.REL[event.code] == "REL_Y":
-									mousepos[1] = c_int8(event.value).value
+									if event.value < 0:
+										mousepos[1] = max(-128, event.value)
+									else:
+										mousepos[1] = min(127, event.value)
 							if ev.ecodes.REL[event.code] == "REL_WHEEL":
 								msg[4] += (c_int8(event.value).value & 0x0F) << 3
 							#print("mouse cursor at: ", mousepos, mousebtn)

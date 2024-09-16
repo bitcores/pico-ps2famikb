@@ -49,7 +49,7 @@ void ps2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint kb
     neskbrst_sm = pio_claim_unused_sm(nesin_pio, true);
     uint neskbrstos = pio_add_program(nesin_pio, &nesinrst_program);
     pio_sm_set_consecutive_pindirs(nesin_pio, neskbrst_sm, nesin_gpio, 1, false);
-    pio_sm_config neskbrstc = nesinprg_program_get_default_config(neskbrstos);
+    pio_sm_config neskbrstc = nesinrst_program_get_default_config(neskbrstos);
     sm_config_set_in_pins(&neskbrstc, nesin_gpio);
     sm_config_set_in_shift(&neskbrstc, false, false, 32);
     pio_sm_init(nesin_pio, neskbrst_sm, neskbrstos, &neskbrstc);
@@ -60,7 +60,7 @@ void ps2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint kb
         neskben_sm = pio_claim_unused_sm(nesin_pio, true);
         uint neskbenos = pio_add_program(nesin_pio, &nesinen_program);
         pio_sm_set_consecutive_pindirs(nesin_pio, neskben_sm, nesin_gpio+2, 1, false);
-        pio_sm_config neskbenc = nesinprg_program_get_default_config(neskbenos);
+        pio_sm_config neskbenc = nesinen_program_get_default_config(neskbenos);
         sm_config_set_in_pins(&neskbenc, nesin_gpio+2);
         sm_config_set_in_shift(&neskbenc, false, false, 32);
         pio_sm_init(nesin_pio, neskben_sm, neskbenos, &neskbenc);
@@ -69,7 +69,7 @@ void ps2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint kb
         neskbadv_sm = pio_claim_unused_sm(nesin_pio, true);
         uint neskbadvos = pio_add_program(nesin_pio, &nesinadv_program);
         pio_sm_set_consecutive_pindirs(nesin_pio, neskbadv_sm, nesin_gpio+1, 1, false);
-        pio_sm_config neskbadvc = nesinprg_program_get_default_config(neskbadvos);
+        pio_sm_config neskbadvc = nesinadv_program_get_default_config(neskbadvos);
         sm_config_set_in_pins(&neskbadvc, nesin_gpio+1);
         sm_config_set_in_shift(&neskbadvc, false, false, 32);
         pio_sm_init(nesin_pio, neskbadv_sm, neskbadvos, &neskbadvc);

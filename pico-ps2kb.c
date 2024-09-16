@@ -145,7 +145,8 @@ static uint8_t kbbackbuffer[MAX_BUFFER];
 static uint8_t transbbindex = 0;
 // mouse updates won't be buffered like the keyboard, if multiple updates come
 // inbetween a frame, we want to put them together instead of stack them up
-static int8_t msebuffer[4];
+// oversizing the buffer type to mitigate overflow
+static int16_t msebuffer[4];
 static int8_t mousex;
 static int8_t mousey;
 
@@ -246,14 +247,14 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
                 // and the first byte with the current value
                 // this means if a button is pressed, it will stay "pressed"
                 // until the NES polls it (probably next frame)
-                msebuffer[0] = msebuffer[0] | hostmsg.mem[2];
+                msebuffer[0] |= hostmsg.mem[2];
                 // if true, we are in relative mode
                 if ((msebuffer[0] & 8) == 8 && hostmsg.new_msg) {
-                    msebuffer[1] += hostmsg.mem[3];
-                    msebuffer[2] += hostmsg.mem[4];
+                    msebuffer[1] += (int8_t)hostmsg.mem[3];
+                    msebuffer[2] += (int8_t)hostmsg.mem[4];
                 } else {
-                    msebuffer[1] = hostmsg.mem[3];
-                    msebuffer[2] = hostmsg.mem[4];   
+                    msebuffer[1] = (int8_t)hostmsg.mem[3];
+                    msebuffer[2] = (int8_t)hostmsg.mem[4];   
                 }
                 // some wheel movements or middle button events could
                 // be missed. target for improvement later
@@ -339,8 +340,20 @@ void nes_handler_thread() {
                 // if there is new data, load it
                 // otherwise, give a 0
                 if (hostmsg.new_msg) {
-                    mousex = msebuffer[1];
-                    mousey = msebuffer[2];
+                    if (msebuffer[1] < -128) {
+                        mousex = -128;
+                    } else if (msebuffer[1] > 127) {
+                        mousex = 127;
+                    } else {
+                        mousex = msebuffer[1];
+                    }
+                    if (msebuffer[2] < -128) {
+                        mousey = -128;
+                    } else if (msebuffer[2] > 127) {
+                        mousey = 127;
+                    } else {
+                        mousey = msebuffer[2];
+                    }
                 } else {
                     mousex = mousey = 0x00;
                 }
