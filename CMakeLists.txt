@@ -17,6 +17,7 @@ project(pico-ps2kb C CXX ASM)
 pico_sdk_init()
 
 add_subdirectory(ps2famikb-lib)
+add_subdirectory(pico-pio-usb)
 
 add_executable(pico-ps2kb pico-ps2kb.c)
 
@@ -26,6 +27,7 @@ target_link_libraries(pico-ps2kb PUBLIC
     pico_stdlib
     pico_multicore
     ps2famikb-lib
+    pico_pio_usb
 )
 
 

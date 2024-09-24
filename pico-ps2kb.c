@@ -217,7 +217,7 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
                     // famikey modes
                     bool state = (hostmsg.mem[1] >> 7) ? 0: 1;
                     uint8_t ascii = hostmsg.mem[1] & 127;
-                    for (int i = 0; i < sizeof(famikey); i++) {
+                    for (uint i = 0; i < sizeof(famikey); i++) {
                         if (famikey[i] == ascii) {
                             keymatrix[i] = state;
                             break;
@@ -227,7 +227,7 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
                     // subor mode
                     bool state = (hostmsg.mem[1] >> 7) ? 0: 1;
                     uint8_t ascii = hostmsg.mem[1] & 127;
-                    for (int i = 0; i < sizeof(suborkey); i++) {
+                    for (uint i = 0; i < sizeof(suborkey); i++) {
                         if (suborkey[i] == ascii) {
                             keymatrix[i] = state;
                             // some keys appear more than once in the matrix
