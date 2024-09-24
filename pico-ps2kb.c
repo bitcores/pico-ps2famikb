@@ -18,8 +18,6 @@
 #include "hardware/pio.h"
 #include "hardware/irq.h"
 
-#include "ps2kbd.h"
-#include "stdinit.h"
 #include "neskbdinter.h"
 #include "ps2famikb.h"
 
@@ -618,10 +616,11 @@ int main() {
         
     }
     else {
-        kbd_init(1, DAT_GPIO);
+        uint8_t code;
+        //kbd_init(1, DAT_GPIO);
     
         for (;;) {
-            uint8_t code = kbd_getraw();
+            //code = kbd_getraw();
 
             //printf("%02d\n", code);
 

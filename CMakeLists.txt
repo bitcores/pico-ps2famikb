@@ -16,8 +16,6 @@ project(pico-ps2kb C CXX ASM)
 
 pico_sdk_init()
 
-add_subdirectory(stdinit-lib)
-add_subdirectory(ps2kbd-lib)
 add_subdirectory(ps2famikb-lib)
 
 add_executable(pico-ps2kb pico-ps2kb.c)
@@ -27,10 +25,11 @@ target_link_libraries(pico-ps2kb PUBLIC
     hardware_i2c
     pico_stdlib
     pico_multicore
-    stdinit-lib
-    ps2kbd-lib
     ps2famikb-lib
 )
+
+
+target_link_options(pico-ps2kb PRIVATE -Xlinker --print-memory-usage)
 
 pico_set_binary_type (pico-ps2kb copy_to_ram)
 
