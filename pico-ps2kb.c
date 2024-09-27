@@ -56,6 +56,19 @@
 #define MAX_BUFFER 16
 #define WORD_SIZE 4
 
+
+// configuration for PIO USB
+// DPDM configuration D+ = pin 14, D- = pin 15
+// configure used SMs around currently used SMs
+// use pio1, it has available SMs
+#define PIO_USB_CONFIG                                                      \
+  {                                                                         \
+    14, pio1, 1,                                                            \
+        pio1, pio1, 2,                                                      \
+        3, NULL, PIO_USB_DEBUG_PIN_NONE,                                    \
+        PIO_USB_DEBUG_PIN_NONE, false, PIO_USB_PINOUT_DPDM                  \
+  }
+
 // keypress matrix for family basic mode & suborkb
 static bool keymatrix[] = {
     0, 0, 0, 0, 0, 0, 0, 0, // 0 0, 0 1

@@ -18,19 +18,13 @@
 
 
 static PIO nesin_pio;
-static PIO nesoe_pio;
 static PIO kbout_pio;
-static uint neskben_sm;
-static uint neskbadv_sm;
-static uint neskbrst_sm;
-static uint nesoe_sm;
-static uint kbout_sm;
+static uint neskben_sm = 2;
+static uint neskbadv_sm = 1;
+static uint neskbrst_sm = 0;
+static uint nesoe_sm = 3; // could share 1 or 2, at least with one OE
+static uint kbout_sm = 0;
 
-static uint8_t kben = 0;
-static uint8_t kbadv = 0;
-static uint8_t kbrst = 0;
-
-static bool latchstate = false;
 
 void ps2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint kbout_gpio, uint kbmode) {
 
@@ -46,7 +40,6 @@ void ps2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint kb
     }
 
     // this line is used for all modes
-    neskbrst_sm = pio_claim_unused_sm(nesin_pio, true);
     uint neskbrstos = pio_add_program(nesin_pio, &nesinrst_program);
     pio_sm_set_consecutive_pindirs(nesin_pio, neskbrst_sm, nesin_gpio, 1, false);
     pio_sm_config neskbrstc = nesinrst_program_get_default_config(neskbrstos);
@@ -57,7 +50,6 @@ void ps2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint kb
 
     // for family basic/subor modes
     if (kbmode > 0) { // set up the NES input PIO on $4016
-        neskben_sm = pio_claim_unused_sm(nesin_pio, true);
         uint neskbenos = pio_add_program(nesin_pio, &nesinen_program);
         pio_sm_set_consecutive_pindirs(nesin_pio, neskben_sm, nesin_gpio+2, 1, false);
         pio_sm_config neskbenc = nesinen_program_get_default_config(neskbenos);
@@ -66,7 +58,6 @@ void ps2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint kb
         pio_sm_init(nesin_pio, neskben_sm, neskbenos, &neskbenc);
         pio_sm_set_enabled(nesin_pio, neskben_sm, true);
 
-        neskbadv_sm = pio_claim_unused_sm(nesin_pio, true);
         uint neskbadvos = pio_add_program(nesin_pio, &nesinadv_program);
         pio_sm_set_consecutive_pindirs(nesin_pio, neskbadv_sm, nesin_gpio+1, 1, false);
         pio_sm_config neskbadvc = nesinadv_program_get_default_config(neskbadvos);
@@ -75,12 +66,10 @@ void ps2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint kb
         pio_sm_init(nesin_pio, neskbadv_sm, neskbadvos, &neskbadvc);
         pio_sm_set_enabled(nesin_pio, neskbadv_sm, true);
 
-
         for (uint8_t i = kbout_gpio; i < kbout_gpio+5; i++) {
             pio_gpio_init(kbout_pio, i);
         }
     
-        kbout_sm = pio_claim_unused_sm(kbout_pio, true);
         uint kboutos = pio_add_program(kbout_pio, &kbout_program);
         pio_sm_set_consecutive_pindirs(kbout_pio, kbout_sm, kbout_gpio, 5, true);
         pio_sm_config kboutc = kbout_program_get_default_config(kboutos);
@@ -96,7 +85,6 @@ void ps2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint kb
             pio_gpio_init(kbout_pio, i);
         }
     
-        kbout_sm = pio_claim_unused_sm(kbout_pio, true);
         uint kboutos = pio_add_program(kbout_pio, &kbmseout_program);
         pio_sm_set_consecutive_pindirs(kbout_pio, kbout_sm, kbout_gpio+3, 2, true);
         pio_sm_config kboutc = kbout_program_get_default_config(kboutos);
@@ -110,7 +98,6 @@ void ps2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint kb
         gpio_init(nesoe2_gpio);
         gpio_pull_up(nesoe2_gpio);
 
-        nesoe_sm = pio_claim_unused_sm(nesin_pio, true);
         uint nesoeos = pio_add_program(nesin_pio, &nesoe_program);
         pio_sm_set_consecutive_pindirs(nesin_pio, nesoe_sm, nesoe2_gpio, 1, false);
         pio_sm_config nesoec = nesoe_program_get_default_config(nesoeos);
@@ -124,7 +111,6 @@ void ps2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint kb
         gpio_init(nesoe1_gpio);
         gpio_pull_up(nesoe1_gpio);
 
-        nesoe_sm = pio_claim_unused_sm(nesin_pio, true);
         uint nesoeos = pio_add_program(nesin_pio, &nesoe_program);
         pio_sm_set_consecutive_pindirs(nesin_pio, nesoe_sm, nesoe1_gpio, 1, false);
         pio_sm_config nesoec = nesoe_program_get_default_config(nesoeos);
