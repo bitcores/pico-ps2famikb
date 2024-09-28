@@ -8,15 +8,22 @@
 #pragma GCC push_options
 #pragma GCC optimize("-O3")
 
+#include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #include <hardware/i2c.h>
 #include <pico/i2c_slave.h>
 
+#include "pico/bootrom.h"
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
+#include "hardware/clocks.h"
 #include "hardware/gpio.h"
 #include "hardware/pio.h"
 #include "hardware/irq.h"
+
+#include "pio_usb.h"
+#include "tusb.h"
 
 #include "neskbdinter.h"
 #include "ps2famikb.h"
@@ -50,11 +57,17 @@
 #define KB_MODE 26
 
 // direct input or usbhost select
-#define USBHOST_ENABLE 28
+#define i2cHOST_ENABLE 28
 
 
 #define MAX_BUFFER 16
 #define WORD_SIZE 4
+
+
+#define MSERELATIVE 1
+#define HORILHAND 1
+#define HORILOWSPD 0
+#define SENDREPEATS 1
 
 
 // configuration for PIO USB
@@ -63,11 +76,12 @@
 // use pio1, it has available SMs
 #define PIO_USB_CONFIG                                                      \
   {                                                                         \
-    14, pio1, 1,                                                            \
-        pio1, pio1, 2,                                                      \
-        3, NULL, PIO_USB_DEBUG_PIN_NONE,                                    \
+    14, 1, 0, 0,                                                            \
+        1, 1, 2,                                                            \
+        NULL, PIO_USB_DEBUG_PIN_NONE,                                       \
         PIO_USB_DEBUG_PIN_NONE, false, PIO_USB_PINOUT_DPDM                  \
   }
+
 
 // keypress matrix for family basic mode & suborkb
 static bool keymatrix[] = {
@@ -141,10 +155,13 @@ static struct
     uint8_t mem[6];
     uint8_t mem_address;
     bool mem_address_written;
-    bool new_msg;
     bool garbage_message;
 } hostmsg;
 
+
+const uint LED_PIN = PICO_DEFAULT_LED_PIN;
+
+static bool new_input_msg;
 // FIFO buffer for keypresses for standard mode
 // buffer length will be relatively small because under standard operation
 // the NES is likely to be reading from the buffer very frequently
@@ -158,18 +175,17 @@ static uint8_t transbbindex = 0;
 // inbetween a frame, we want to put them together instead of stack them up
 // oversizing the buffer type to mitigate overflow
 static int16_t msebuffer[4];
+// we want to store 
+static int16_t mseinstbuf[4];
 static int8_t mousex;
 static int8_t mousey;
 
 static bool NESinlatch = false;
 
 static uint8_t ps2kbmode;
-static bool usbhostmode = false;
+static bool i2chostmode = false;
 static uint8_t kblayout;
 
-static uint8_t extended;
-static uint8_t release = 1;  // use opposite state
-static uint8_t ascii;
 static uint32_t output = 0;
 static uint8_t select = 0;
 static uint8_t enable = 0;
@@ -260,7 +276,7 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
                 // until the NES polls it (probably next frame)
                 msebuffer[0] |= hostmsg.mem[2];
                 // if true, we are in relative mode
-                if ((msebuffer[0] & 8) == 8 && hostmsg.new_msg) {
+                if ((msebuffer[0] & 8) == 8 && new_input_msg) {
                     msebuffer[1] += (int8_t)hostmsg.mem[3];
                     msebuffer[2] += (int8_t)hostmsg.mem[4];
                 } else {
@@ -271,7 +287,7 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
                 // be missed. target for improvement later
                 msebuffer[3] |= hostmsg.mem[5];
             }
-            hostmsg.new_msg = true;
+            new_input_msg = true;
         }
         
         hostmsg.mem_address_written = false;
@@ -285,11 +301,18 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
 // when mouse data is sent to the NES, update relevant buffer data
 static void update_mouse_data() {
     // if there is new data from the host
-    if (hostmsg.new_msg) {
-        // actually update button values
-        msebuffer[0] = hostmsg.mem[2];
-        msebuffer[3] = hostmsg.mem[5];
-        hostmsg.new_msg = false;
+    if (new_input_msg) {
+        if (i2chostmode) {
+            // actually update button values
+            msebuffer[0] = hostmsg.mem[2];
+            msebuffer[3] = hostmsg.mem[5];
+        } else {
+            msebuffer[0] = mseinstbuf[0];
+            msebuffer[1] = mseinstbuf[1];
+            msebuffer[2] = mseinstbuf[2];
+            msebuffer[3] = mseinstbuf[3] & 0x87;
+        }
+        new_input_msg = false;
     }
 }
 
@@ -350,7 +373,7 @@ void nes_handler_thread() {
 
                 // if there is new data, load it
                 // otherwise, give a 0
-                if (hostmsg.new_msg) {
+                if (new_input_msg) {
                     if (msebuffer[1] < -128) {
                         mousex = -128;
                     } else if (msebuffer[1] > 127) {
@@ -544,20 +567,21 @@ void nes_handler_thread() {
 
             uint32_t serialout = 0;
             // push next mouse bit in
-            serialout += (~mseword & 0x80000000) >> 30;
+            serialout += (~mseword & 0x80000000) >> 27;
             // push the next keyboard bit in
-            serialout += (~kbword & 0x80000000) >> 31;
-
+            serialout += (~kbword & 0x80000000) >> 28;
+        
             ps2famikb_putkb(serialout);
-
         }
     }
 
 }
 
 int main() {
-    set_sys_clock_khz(270000, true);
-    //stdio_init();
+    // need a clock speed that is a multiple of 12,000
+    //set_sys_clock_khz(264000, true);
+    set_sys_clock_khz(264000, true);
+
     //  configure pico-ps2kb based on gpio
     gpio_init(KB_MODE); gpio_init(KB_MODE+1);
     gpio_set_dir(KB_MODE, GPIO_IN); gpio_set_dir(KB_MODE+1, GPIO_IN);
@@ -570,11 +594,11 @@ int main() {
     ps2kbmode |= gpio_get(KB_MODE+1) << 1;
     ps2kbmode |= gpio_get(KB_MODE);
 
-    gpio_init(USBHOST_ENABLE);
-    gpio_set_dir(USBHOST_ENABLE, GPIO_IN);
-    gpio_pull_down(USBHOST_ENABLE);
+    gpio_init(i2cHOST_ENABLE);
+    gpio_set_dir(i2cHOST_ENABLE, GPIO_IN);
+    gpio_pull_down(i2cHOST_ENABLE);
     
-    usbhostmode = gpio_get(USBHOST_ENABLE);
+    i2chostmode = gpio_get(i2cHOST_ENABLE);
 
     // prepare buffers
     for (int i = 0; i < MAX_BUFFER; i++) {
@@ -583,22 +607,23 @@ int main() {
     for (int i = 1; i < 4; i++) {
         msebuffer[i] = 0x00;
         subormouse[i-1] = 0x00;
+        mseinstbuf[i] = 0x00;
     }
     // set only the device id in the buffer so if the NES
     // strobes for update before data received it will know
     // the interface is present
-    msebuffer[0] = 0x06;
+    msebuffer[0] = mseinstbuf[0] = 0x06;
 
+    multicore_reset_core1();
     //  run the NES handler on seperate core
     multicore_launch_core1(nes_handler_thread);
 
     //  everything should have initialized, turn on LED
-    const uint LED_PIN = PICO_DEFAULT_LED_PIN;
     gpio_init(LED_PIN);
     gpio_set_dir(LED_PIN, GPIO_OUT);
     gpio_put(LED_PIN, 1);
 
-    if (usbhostmode) {
+    if (i2chostmode) {
         gpio_init(I2C_SDA_PIN);
         gpio_set_function(I2C_SDA_PIN, GPIO_FUNC_I2C);
         gpio_pull_up(I2C_SDA_PIN);
@@ -629,87 +654,250 @@ int main() {
         
     }
     else {
-        uint8_t code;
-        //kbd_init(1, DAT_GPIO);
-    
-        for (;;) {
-            //code = kbd_getraw();
+        mseinstbuf[0] |= MSERELATIVE << 3;
+        sleep_ms(10);
 
-            //printf("%02d\n", code);
+        // Use tuh_configure() to pass pio configuration to the host stack
+        // Note: tuh_configure() must be called before
+        pio_usb_configuration_t pio_cfg = PIO_USB_CONFIG;
+        tuh_configure(1, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &pio_cfg);
 
-            switch (code) {
-                case 0xE0:
-                    extended = 1;        // extended-ascii code 0xE0 detected
-                    break;
-                case 0xF0:               // key-release code 0xF0 detected
-                    release = 0;         // set release
-                    break;               // go back to start
-                default:
-                    if (extended) {  // if extended key, check the extkeymap
-                        for (uint8_t i = 0; i < sizeof(extkeymap); i++) {
-                            if (extkeymap[i] == code) {
-                                ascii = extkeys[i];
-                                break;
-                            }
-                        }
-                    } else {    // if not extended, check the norkeymap
-                        for (uint8_t i = 0; i < sizeof(norkeymap); i++) {
-                            if (norkeymap[i] == code) {
-                                ascii = norkeys[i];
-                                break;
-                            }
-                        }
-                    }
+        // To run USB SOF interrupt in core0, init host stack for pio_usb (roothub
+        // port1) on core0
+        tuh_init(1);
 
-                    if (ps2kbmode == 1 || ps2kbmode == 3) { // famikey modes
-                        // update the status of the key
-                        for (uint8_t i = 0; i < sizeof(famikey); i++) {
-                            if (famikey[i] == ascii) {
-                                keymatrix[i] = release;
-                                break;
-                            }
-                        }
-                    } else if (ps2kbmode == 2) { // subor mode
-                        // update the status of the key
-                        for (uint8_t i = 0; i < sizeof(suborkey); i++) {
-                            if (suborkey[i] == ascii) {
-                                keymatrix[i] = release;
-                                // some keys appear more than once in the matrix
-                                //break;
-                            }
-                        }
-                    } else { // keyboard mouse host mode
-                        // if the key is being released, add 0x80
-                        if (!release && ascii > 0x00) {
-                            ascii += 0x80;
-                        }
+        if (tuh_inited()) {
+            sleep_ms(500);
+            gpio_put(LED_PIN, 0);
+            sleep_ms(500);
+            gpio_put(LED_PIN, 1);
+        }
 
-                        // bitwise NOT the ascii values into the buffer
-                        if ((bufferindex+1) == MAX_BUFFER) {
-                            for (int i = 1; i < MAX_BUFFER; i++) {
-                                keybuffer[i-1] = keybuffer[i];
-                            }
-                            keybuffer[bufferindex] = ~ascii;
-                        }
-                        else {
-                            keybuffer[bufferindex] = ~ascii;
-                            bufferindex++;
-                        }
-                    }
-
-                    extended = 0;
-                    release = 1;
-                    break;
-            }
-
-            // is this even necessary?
-            if (bufferindex >= MAX_BUFFER) {
-                bufferindex = MAX_BUFFER-1;
-            }
-
+        while (true) {
+            tuh_task(); // tinyusb host task
         }
     }
 
 }
+
+static void keycode_handler(uint8_t ascii, uint8_t release) {
+
+    if (ps2kbmode == 1 || ps2kbmode == 3) { // famikey modes
+        // update the status of the key
+        for (uint8_t i = 0; i < sizeof(famikey); i++) {
+            if (famikey[i] == ascii) {
+                keymatrix[i] = release;
+                break;
+            }
+        }
+    } else if (ps2kbmode == 2) { // subor mode
+        // update the status of the key
+        for (uint8_t i = 0; i < sizeof(suborkey); i++) {
+            if (suborkey[i] == ascii) {
+                keymatrix[i] = release;
+                // some keys appear more than once in the matrix
+                //break;
+            }
+        }
+    } else { // keyboard mouse host mode
+        // if the key is being released, add 0x80
+        if (!release && ascii > 0x00) {
+            ascii += 0x80;
+        }
+
+        // bitwise NOT the ascii values into the buffer
+        if ((bufferindex+1) == MAX_BUFFER) {
+            for (int i = 1; i < MAX_BUFFER; i++) {
+                keybuffer[i-1] = keybuffer[i];
+            }
+            keybuffer[bufferindex] = ascii;
+        }
+        else {
+            keybuffer[bufferindex] = ascii;
+            bufferindex++;
+        }
+    }
+
+}
+
+
+//--------------------------------------------------------------------+
+// Host HID
+//--------------------------------------------------------------------+
+
+// Invoked when device with hid interface is mounted
+// Report descriptor is also available for use. tuh_hid_parse_report_descriptor()
+// can be used to parse common/simple enough descriptor.
+// Note: if report descriptor length > CFG_TUH_ENUMERATION_BUFSIZE, it will be skipped
+// therefore report_desc = NULL, desc_len = 0
+void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_report, uint16_t desc_len)
+{
+    (void)desc_report;
+    (void)desc_len;
+
+    // Interface protocol (hid_interface_protocol_enum_t)
+    uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
+
+    //uint16_t vid, pid;
+    //tuh_vid_pid_get(dev_addr, &vid, &pid);
+
+    char tempbuf[256];
+    //int count = sprintf(tempbuf, "[%04x:%04x][%u] HID Interface%u, Protocol = %s\r\n", vid, pid, dev_addr, instance, protocol_str[itf_protocol]);
+
+    //tud_cdc_write(tempbuf, count);
+    //tud_cdc_write_flush();
+
+    // Receive report from boot keyboard & mouse only
+    // tuh_hid_report_received_cb() will be invoked when report is available
+    if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD || itf_protocol == HID_ITF_PROTOCOL_MOUSE) {
+        switch (itf_protocol) {
+            case (HID_ITF_PROTOCOL_KEYBOARD):
+                mseinstbuf[0] |= 0x10;
+                break;
+            case (HID_ITF_PROTOCOL_MOUSE):
+                mseinstbuf[0] |= 0x20;
+                break;
+        }
+        new_input_msg = true;
+
+        //  set up report receiving
+        tuh_hid_receive_report(dev_addr, instance);
+
+    }
+}
+
+// Invoked when device with hid interface is un-mounted
+void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance)
+{
+    char tempbuf[256];
+    //int count = sprintf(tempbuf, "[%u] HID Interface%u is unmounted\r\n", dev_addr, instance);
+    uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
+    
+    switch (itf_protocol) {
+        case (HID_ITF_PROTOCOL_KEYBOARD):
+            mseinstbuf[0] &= 0xEF;
+            break;
+        case (HID_ITF_PROTOCOL_MOUSE):
+            mseinstbuf[0] &= 0xDF;
+            break;
+    }
+    new_input_msg = true;
+    
+    //tud_cdc_write(tempbuf, count);
+    //tud_cdc_write_flush();
+}
+
+// look up new key in previous keys
+static inline bool find_key_in_report(hid_keyboard_report_t const *report, uint8_t keycode)
+{
+    for(uint8_t i=0; i<6; i++)
+    {
+        if (report->keycode[i] == keycode)  return true;
+    }
+
+    return false;
+}
+
+// look up new key in previous keys
+static inline uint8_t find_release_in_report(hid_keyboard_report_t const *report, uint8_t index)
+{
+    if (report->keycode[index] > 0x00) return report->keycode[index];
+    return 0x00;
+}
+
+// convert hid keycode to ascii and print via usb device CDC (ignore non-printable)
+static void process_kbd_report(hid_keyboard_report_t const *report)
+{
+    static hid_keyboard_report_t prev_report = { 0, 0, {0} }; // previous report to check key released
+
+    for(uint8_t i=0; i<6; i++)
+    {
+        uint8_t keycode = report->keycode[i];
+        if ( keycode )
+        {
+            if ( find_key_in_report(&prev_report, keycode)) {
+                // ignore for now would like a repeat thing
+            } else {
+                keycode_handler(keycode, 0x01);
+            }
+        }
+        else {
+            keycode = find_release_in_report(&prev_report, i);
+            if (keycode > 0x00) {
+                keycode_handler(keycode, 0x00);
+            }
+        }
+    }
+
+    prev_report = *report;
+}
+
+// send mouse report to usb device CDC
+static void process_mouse_report(hid_mouse_report_t const * report)
+{
+
+    //------------- button state  -------------//
+    //uint8_t button_changed_mask = report->buttons ^ prev_report.buttons;
+    uint8_t temp = mseinstbuf[0] & 0x3F;
+    temp |= (report->buttons & MOUSE_BUTTON_LEFT) << 7;
+    temp |= (report->buttons & MOUSE_BUTTON_RIGHT) << 5;
+    mseinstbuf[0] = temp;
+    msebuffer[0] |= mseinstbuf[0];
+
+    temp = 0x00;
+    temp |= (report->buttons & MOUSE_BUTTON_MIDDLE) << 5;
+    temp |= (report->wheel & 0x0F) << 3;
+    temp |= HORILHAND << 1;
+    temp |= HORILOWSPD;
+    mseinstbuf[3] = temp;
+    msebuffer[3] |= mseinstbuf[3];
+
+    if (MSERELATIVE) {
+        if (new_input_msg) {
+            msebuffer[1] += report->x;
+            msebuffer[2] += report->y;
+            mseinstbuf[1] = report->x;
+            mseinstbuf[2] = report->y;
+        } else {
+            msebuffer[1] = mseinstbuf[1] = report->x;
+            msebuffer[2] = mseinstbuf[2] = report->y;
+        }
+    } else {
+        mseinstbuf[1] += report->x;
+        if (mseinstbuf[1] < 0) mseinstbuf[1] = 0;
+        if (mseinstbuf[1] > 255) mseinstbuf[1] = 255;
+
+        mseinstbuf[2] += report->y;
+        if (mseinstbuf[2] < 0) mseinstbuf[2] = 0;
+        if (mseinstbuf[2] > 255) mseinstbuf[2] = 255;
+    }
+
+    new_input_msg = true;
+
+}
+
+// Invoked when received report from device via interrupt endpoint
+void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* report, uint16_t len)
+{
+    (void) len;
+    uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
+
+    switch(itf_protocol)
+    {
+        case HID_ITF_PROTOCOL_KEYBOARD:
+        process_kbd_report((hid_keyboard_report_t const*) report );
+        break;
+
+        case HID_ITF_PROTOCOL_MOUSE:
+        process_mouse_report((hid_mouse_report_t const*) report );
+        break;
+
+        default: break;
+    }
+
+    // continue to request to receive report
+    tuh_hid_receive_report(dev_addr, instance);
+}
+
 
 #pragma GCC pop_options

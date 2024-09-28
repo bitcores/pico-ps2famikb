@@ -19,7 +19,13 @@ pico_sdk_init()
 add_subdirectory(ps2famikb-lib)
 add_subdirectory(pico-pio-usb)
 
-add_executable(pico-ps2kb pico-ps2kb.c)
+add_executable(pico-ps2kb)
+
+target_sources(pico-ps2kb PRIVATE
+    pico-ps2kb.c
+    ${PICO_TINYUSB_PATH}/src/portable/raspberrypi/pio_usb/dcd_pio_usb.c
+    ${PICO_TINYUSB_PATH}/src/portable/raspberrypi/pio_usb/hcd_pio_usb.c
+)
 
 target_link_libraries(pico-ps2kb PUBLIC
     pico_i2c_slave
@@ -27,16 +33,22 @@ target_link_libraries(pico-ps2kb PUBLIC
     pico_stdlib
     pico_multicore
     ps2famikb-lib
-    pico_pio_usb
+    
 )
 
+target_link_libraries(pico-ps2kb PRIVATE
+    pico_pio_usb
+    tinyusb_host
+)
+
+# use tinyusb implementation
+target_compile_definitions(pico-ps2kb PRIVATE PIO_USB_USE_TINYUSB)
+target_include_directories(pico-ps2kb PRIVATE ${CMAKE_CURRENT_LIST_DIR})
 
 target_link_options(pico-ps2kb PRIVATE -Xlinker --print-memory-usage)
 
 pico_set_binary_type (pico-ps2kb copy_to_ram)
 
-pico_enable_stdio_uart(pico-ps2kb 0)
-pico_enable_stdio_usb(pico-ps2kb 1)
 
 pico_add_extra_outputs(pico-ps2kb)
 

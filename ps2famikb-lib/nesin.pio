@@ -1,14 +1,19 @@
 .program nesoe
 ; monitor joypad 1/2 OE to strobe output
-; send wait interrupt 
+; send wait interrupt
+; push output lots
 .wrap_target
 
+; osr is filled in ps2famikb.c, just keep
+; 
     wait 0 pin 0
     nop [5]
+    out pins, 5
     wait 1 pin 0
     irq wait 3
+    out pins, 5
     nop [5]
-    
+
 .wrap
 
 
