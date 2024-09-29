@@ -26,7 +26,7 @@
 #include "tusb.h"
 
 #include "neskbdinter.h"
-#include "ps2famikb.h"
+#include "usb2famikb.h"
 
 #include "kblayout.c"
 
@@ -666,12 +666,12 @@ int main() {
         // port1) on core0
         tuh_init(1);
 
-        if (tuh_inited()) {
+        /*if (tuh_inited()) {
             sleep_ms(500);
             gpio_put(LED_PIN, 0);
             sleep_ms(500);
             gpio_put(LED_PIN, 1);
-        }
+        }*/
 
         while (true) {
             tuh_task(); // tinyusb host task
