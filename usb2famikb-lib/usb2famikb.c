@@ -112,11 +112,13 @@ void ps2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint kb
 
 }
 
-void ps2famikb_putkb(uint32_t kbcode) {
+void ps2famikb_putkb(uint32_t nesout) {
     // we basically just force the SM to pull this data now, no matter
-    // what it is doing, and then it returns back to where it was
-    pio_sm_put(picofamikb_pio, nesoe_sm, kbcode);
+    // what it is doing, and put it on the output
+    // then it returns back to where it was
+    pio_sm_put(picofamikb_pio, nesoe_sm, nesout);
     pio_sm_exec(picofamikb_pio, nesoe_sm, pio_encode_pull(false, false));
+    pio_sm_exec(picofamikb_pio, nesoe_sm, pio_encode_out(pio_pins, 5));
 }
 
 #pragma GCC pop_options
