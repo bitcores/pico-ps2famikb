@@ -65,13 +65,15 @@
 // DPDM configuration D+ = pin 14, D- = pin 15
 // configure used SMs around currently used SMs
 // use pio1, it has available SMs
-#define PIO_USB_CONFIG                                                      \
-  {                                                                         \
-    14, 1, 0, 0,                                                            \
-        1, 1, 2,                                                            \
-        NULL, PIO_USB_DEBUG_PIN_NONE,                                       \
-        PIO_USB_DEBUG_PIN_NONE, false, PIO_USB_PINOUT_DPDM                  \
-  }
+// dp pin, usb tx pio, usb tx sm, usb tx dma
+// usb rx pio, usb rx sm, usb eop sm
+#define PIO_USB_CONFIG                                                          \
+    {                                                                           \
+        14, 1, 0, 0,                                                            \
+            1, 1, 2,                                                            \
+            NULL, PIO_USB_DEBUG_PIN_NONE,                                       \
+            PIO_USB_DEBUG_PIN_NONE, false, PIO_USB_PINOUT_DPDM                  \
+    }
 
 
 // keypress matrix for family basic mode & suborkb
@@ -342,7 +344,7 @@ void pio_IRQ_handler() {
 
 void nes_handler_thread() {
 
-    ps2famikb_init(NES_OUT, NES_JOY1OE, NES_JOY2OE, NES_DATA, usb2kbmode);
+    usb2famikb_init(NES_OUT, NES_JOY1OE, NES_JOY2OE, NES_DATA, usb2kbmode);
 
     
     if (usb2kbmode > 0) {
@@ -517,7 +519,7 @@ void nes_handler_thread() {
                 output += (horitrack >> 31) ? 0: 1;
             }
 
-            ps2famikb_putkb(output);
+            usb2famikb_putkb(output);
         }
 
     } else {
@@ -574,7 +576,7 @@ void nes_handler_thread() {
             // push the next keyboard bit in
             serialout += (~kbword & 0x80000000) >> 28;
         
-            ps2famikb_putkb(serialout);
+            usb2famikb_putkb(serialout);
         }
     }
 
@@ -746,17 +748,26 @@ static inline bool find_key_in_report(hid_keyboard_report_t const *report, uint8
     return false;
 }
 
-// see if index had a keycode in the last report
-static inline uint8_t find_release_in_report(hid_keyboard_report_t const *report, uint8_t index)
+// check if a keycode is missing from prev report
+static inline void find_releases_in_report(hid_keyboard_report_t const *prev_report, hid_keyboard_report_t const *report)
 {
-    if (report->keycode[index] > 0x00) return report->keycode[index];
-    return 0x00;
+    for(uint8_t i=0; i<6; i++)
+    {
+        if (prev_report->keycode[i] == 0x00) { break; }
+        if (prev_report->keycode[i] != report->keycode[i]) {
+            keycode_handler(prev_report->keycode[i] + 0x80);
+            break;
+        }
+    }
 }
 
 // process the kbd report and send to keycode handler
 static void process_kbd_report(hid_keyboard_report_t const *report)
 {
     static hid_keyboard_report_t prev_report = { 0, 0, {0} }; // previous report to check key released
+
+    // keycode positions change when released, so need to check all
+    find_releases_in_report(&prev_report, report);
 
     for(uint8_t i=0; i<6; i++)
     {
@@ -769,19 +780,13 @@ static void process_kbd_report(hid_keyboard_report_t const *report)
                 keycode_handler(keycode);
             }
         }
-        else {
-            keycode = find_release_in_report(&prev_report, i);
-            if (keycode > 0x00) {
-                keycode_handler(keycode += 0x80);
-            }
-        }
     }
 
     prev_report = *report;
 }
 
 // process the mouse report and insert into buffers
-static void process_mouse_report(hid_mouse_report_t const * report)
+static void process_mouse_report(hid_mouse_report_t const *report)
 {
     uint8_t temp = mseinstbuf[0] & 0x3F;
     temp |= (report->buttons & MOUSE_BUTTON_LEFT) << 7;
@@ -815,6 +820,9 @@ static void process_mouse_report(hid_mouse_report_t const * report)
         mseinstbuf[2] += report->y;
         if (mseinstbuf[2] < 0) { mseinstbuf[2] = 0; }
         if (mseinstbuf[2] > 255) { mseinstbuf[2] = 255; }
+        
+        msebuffer[1] = mseinstbuf[1];
+        msebuffer[2] = mseinstbuf[2];
     }
 
     new_input_msg = true;

@@ -27,7 +27,7 @@ static const uint nesoe_sm = 3;
 static uint nesoeos;
 
 
-void ps2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint kbout_gpio, uint usb2kbmode) {
+void usb2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint kbout_gpio, uint usb2kbmode) {
 
     for (uint8_t i = nesin_gpio; i < nesin_gpio+3; i++) {
         gpio_init(i);
@@ -112,7 +112,7 @@ void ps2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint kb
 
 }
 
-void ps2famikb_putkb(const uint32_t nesout) {
+void usb2famikb_putkb(const uint32_t nesout) {
     // we basically just force the SM to pull this data now, no matter
     // what it is doing, and put it on the output
     // then it returns back to where it was
