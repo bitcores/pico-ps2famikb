@@ -5,6 +5,7 @@ Emulates
 * Family Basic Keyboard
 * Subor Keyboard and Mouse
 * Hori Track
+
 And supports Keyboard and Mouse Host mode, a community developed serialized keyboard and mouse interface.
 
 ![](pico-wiring-guide.jpg)
