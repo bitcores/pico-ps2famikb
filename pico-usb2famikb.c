@@ -28,7 +28,8 @@
 #include "neskbdinter.h"
 #include "usb2famikb.h"
 
-#include "kblayout.c"
+// unnecessary now?
+//#include "kblayout.c"
 
 // $4016 "out" from Famicom/NES, three consecutive pins
 #define NES_OUT 2
@@ -39,16 +40,6 @@
 // $4017 "data" lines, five consecutive pins
 #define NES_DATA 5
 
-// KBD data and clock inputs must be consecutive with
-// data in the lower position.
-#define DAT_GPIO 12 // PS/2 data
-#define CLK_GPIO 13 // PS/2 clock
-
-// mouse data and clock inputs must be consecutive with
-// data in the lower position.
-#define MSE_DAT_GPIO 14 // PS/2 data
-#define MSE_CLK_GPIO 15 // PS/2 clock
-
 // I2C communication pins
 #define I2C_SDA_PIN 0
 #define I2C_SCL_PIN 1
@@ -56,14 +47,14 @@
 // keyboard mode select, two consecutive pins
 #define KB_MODE 26
 
-// direct input or usbhost select
+// direct input or i2chost select
 #define i2cHOST_ENABLE 28
 
 
 #define MAX_BUFFER 16
 #define WORD_SIZE 4
 
-
+// extra config for devices in direct input mode
 #define MSERELATIVE 1
 #define HORILHAND 1
 #define HORILOWSPD 0
@@ -182,15 +173,13 @@ static int8_t mousey;
 
 static bool NESinlatch = false;
 
-static uint8_t ps2kbmode;
+static uint8_t usb2kbmode;
 static bool i2chostmode = false;
-static uint8_t kblayout;
 
 static uint32_t output = 0;
 static uint8_t select = 0;
 static uint8_t enable = 0;
 static uint8_t toggle = 0;
-static uint8_t setoe2 = 0;
 static bool instrobe = false;
 
 static uint32_t kbword = 0;
@@ -199,8 +188,47 @@ static uint32_t mseword = 0;
 static uint8_t subormouse[4]; // three byte holder for subor mouse data (one byte pad)
 static uint8_t sbmouseindex = 0;
 static uint8_t sbmouselength = 0; // should be 1 or 3 each report
+static uint32_t horitrack = 0; // output data for horitrack
 
-static uint32_t horitrack = 0;
+// handle key input into the buffer or matrices
+static void keycode_handler(uint8_t ascii) {
+    bool release;
+    if (usb2kbmode > 0) {
+        release = (ascii >> 7) ? 0: 1;
+        ascii = ascii & 127;
+    }
+
+    if (usb2kbmode == 1 || usb2kbmode == 3) { // famikey modes
+        // update the status of the key
+        for (uint8_t i = 0; i < sizeof(famikey); i++) {
+            if (famikey[i] == ascii) {
+                keymatrix[i] = release;
+                break;
+            }
+        }
+    } else if (usb2kbmode == 2) { // subor mode
+        // update the status of the key
+        for (uint8_t i = 0; i < sizeof(suborkey); i++) {
+            if (suborkey[i] == ascii) {
+                keymatrix[i] = release;
+                // some keys appear more than once in the matrix
+                //break;
+            }
+        }
+    } else { // keyboard mouse host mode
+        if ((bufferindex+1) == MAX_BUFFER) {
+            for (int i = 1; i < MAX_BUFFER; i++) {
+                keybuffer[i-1] = keybuffer[i];
+            }
+            keybuffer[bufferindex] = ascii;
+        }
+        else {
+            keybuffer[bufferindex] = ascii;
+            bufferindex++;
+        }
+    }
+
+}
 
 // I2C configuration
 static const uint I2C_ADDRESS = 0x17;
@@ -242,32 +270,7 @@ static void i2c_slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
         if (!hostmsg.garbage_message) {
             // parse the value from mem[1] if not 0x00
             if (hostmsg.mem[1] != 0x00) {
-                if (ps2kbmode == 1 || ps2kbmode == 3) {
-                    // famikey modes
-                    bool state = (hostmsg.mem[1] >> 7) ? 0: 1;
-                    uint8_t ascii = hostmsg.mem[1] & 127;
-                    for (uint i = 0; i < sizeof(famikey); i++) {
-                        if (famikey[i] == ascii) {
-                            keymatrix[i] = state;
-                            break;
-                        }
-                    }
-                } else if (ps2kbmode == 2) {
-                    // subor mode
-                    bool state = (hostmsg.mem[1] >> 7) ? 0: 1;
-                    uint8_t ascii = hostmsg.mem[1] & 127;
-                    for (uint i = 0; i < sizeof(suborkey); i++) {
-                        if (suborkey[i] == ascii) {
-                            keymatrix[i] = state;
-                            // some keys appear more than once in the matrix
-                            //break;
-                        }
-                    }
-                } else { // keyboard mouse host mode
-                    // shouldn't need to check if keyboard is "present" for this
-                    kbbackbuffer[kbbbindex] = hostmsg.mem[1];
-                    kbbbindex = (kbbbindex + 1) % MAX_BUFFER;
-                }
+                keycode_handler(hostmsg.mem[1]);
             }
             // only update mouse buffer if mouse is "present"
             if ((hostmsg.mem[2] & 32) == 32) {
@@ -320,15 +323,15 @@ static void update_mouse_data() {
 void pio_IRQ_handler() {
 
     if (pio_interrupt_get(pio0, 3)) {
-        if (ps2kbmode == 2) {
+        if (usb2kbmode == 2) {
             // move the subor mouse data along
             subormouse[sbmouseindex] = subormouse[sbmouseindex] << 1;
         }
-        else if (ps2kbmode == 0) {
+        else if (usb2kbmode == 0) {
             mseword = mseword << 1;
             kbword = kbword << 1;
         }
-        else if (ps2kbmode == 3) {
+        else if (usb2kbmode == 3) {
             horitrack = horitrack << 1;
         }
 
@@ -339,12 +342,12 @@ void pio_IRQ_handler() {
 
 void nes_handler_thread() {
 
-    ps2famikb_init(NES_OUT, NES_JOY1OE, NES_JOY2OE, NES_DATA, ps2kbmode);
+    ps2famikb_init(NES_OUT, NES_JOY1OE, NES_JOY2OE, NES_DATA, usb2kbmode);
 
     
-    if (ps2kbmode > 0) {
+    if (usb2kbmode > 0) {
 
-        if (ps2kbmode >= 2) {
+        if (usb2kbmode >= 2) {
             pio_set_irq0_source_enabled(pio0, pis_interrupt3, true);
             irq_set_exclusive_handler(PIO0_IRQ_0, pio_IRQ_handler);
         }
@@ -393,7 +396,7 @@ void nes_handler_thread() {
                 }
 
                 // if subor or famikb+horitrack modes, prepare mouse data
-                if (ps2kbmode == 2) {
+                if (usb2kbmode == 2) {
                     // progress index if less than length
                     if (sbmouseindex < sbmouselength) {
                         sbmouseindex++;
@@ -465,7 +468,7 @@ void nes_handler_thread() {
                         }
 
                     }
-                } else if (ps2kbmode == 3) {
+                } else if (usb2kbmode == 3) {
                     horitrack = 0x00;
                     horitrack |= msebuffer[0] & 0xC0;
                     horitrack <<= 4;
@@ -491,7 +494,7 @@ void nes_handler_thread() {
                 }
             } else if ((nesread & 2) != toggle) {   // increment keyboard row
                 toggle = nesread & 2;
-                if (ps2kbmode == 2) {   //  wrap back to first row
+                if (usb2kbmode == 2) {   //  wrap back to first row
                     select = (select + 1) % 26; // 26 blocks for subor
                 } else {
                     select = (select + 1) % 18; // 18 blocks for famikb
@@ -507,10 +510,10 @@ void nes_handler_thread() {
                 }
             }
 
-            if (ps2kbmode == 2) {
+            if (usb2kbmode == 2) {
                 // append subor mouse data
                 output += (subormouse[sbmouseindex] >> 7) ? 0: 1;
-            } else if (ps2kbmode == 3) {
+            } else if (usb2kbmode == 3) {
                 output += (horitrack >> 31) ? 0: 1;
             }
 
@@ -591,8 +594,8 @@ int main() {
     //  1: famikb mode
     //  2: subor mode
     //  3: famikb+hori trackball
-    ps2kbmode |= gpio_get(KB_MODE+1) << 1;
-    ps2kbmode |= gpio_get(KB_MODE);
+    usb2kbmode |= gpio_get(KB_MODE+1) << 1;
+    usb2kbmode |= gpio_get(KB_MODE);
 
     gpio_init(i2cHOST_ENABLE);
     gpio_set_dir(i2cHOST_ENABLE, GPIO_IN);
@@ -680,47 +683,6 @@ int main() {
 
 }
 
-static void keycode_handler(uint8_t ascii, uint8_t release) {
-
-    if (ps2kbmode == 1 || ps2kbmode == 3) { // famikey modes
-        // update the status of the key
-        for (uint8_t i = 0; i < sizeof(famikey); i++) {
-            if (famikey[i] == ascii) {
-                keymatrix[i] = release;
-                break;
-            }
-        }
-    } else if (ps2kbmode == 2) { // subor mode
-        // update the status of the key
-        for (uint8_t i = 0; i < sizeof(suborkey); i++) {
-            if (suborkey[i] == ascii) {
-                keymatrix[i] = release;
-                // some keys appear more than once in the matrix
-                //break;
-            }
-        }
-    } else { // keyboard mouse host mode
-        // if the key is being released, add 0x80
-        if (!release && ascii > 0x00) {
-            ascii += 0x80;
-        }
-
-        // bitwise NOT the ascii values into the buffer
-        if ((bufferindex+1) == MAX_BUFFER) {
-            for (int i = 1; i < MAX_BUFFER; i++) {
-                keybuffer[i-1] = keybuffer[i];
-            }
-            keybuffer[bufferindex] = ascii;
-        }
-        else {
-            keybuffer[bufferindex] = ascii;
-            bufferindex++;
-        }
-    }
-
-}
-
-
 //--------------------------------------------------------------------+
 // Host HID
 //--------------------------------------------------------------------+
@@ -737,15 +699,6 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_re
 
     // Interface protocol (hid_interface_protocol_enum_t)
     uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
-
-    //uint16_t vid, pid;
-    //tuh_vid_pid_get(dev_addr, &vid, &pid);
-
-    char tempbuf[256];
-    //int count = sprintf(tempbuf, "[%04x:%04x][%u] HID Interface%u, Protocol = %s\r\n", vid, pid, dev_addr, instance, protocol_str[itf_protocol]);
-
-    //tud_cdc_write(tempbuf, count);
-    //tud_cdc_write_flush();
 
     // Receive report from boot keyboard & mouse only
     // tuh_hid_report_received_cb() will be invoked when report is available
@@ -769,8 +722,6 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_re
 // Invoked when device with hid interface is un-mounted
 void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance)
 {
-    char tempbuf[256];
-    //int count = sprintf(tempbuf, "[%u] HID Interface%u is unmounted\r\n", dev_addr, instance);
     uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
     
     switch (itf_protocol) {
@@ -782,9 +733,6 @@ void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance)
             break;
     }
     new_input_msg = true;
-    
-    //tud_cdc_write(tempbuf, count);
-    //tud_cdc_write_flush();
 }
 
 // look up new key in previous keys
@@ -798,14 +746,14 @@ static inline bool find_key_in_report(hid_keyboard_report_t const *report, uint8
     return false;
 }
 
-// look up new key in previous keys
+// see if index had a keycode in the last report
 static inline uint8_t find_release_in_report(hid_keyboard_report_t const *report, uint8_t index)
 {
     if (report->keycode[index] > 0x00) return report->keycode[index];
     return 0x00;
 }
 
-// convert hid keycode to ascii and print via usb device CDC (ignore non-printable)
+// process the kbd report and send to keycode handler
 static void process_kbd_report(hid_keyboard_report_t const *report)
 {
     static hid_keyboard_report_t prev_report = { 0, 0, {0} }; // previous report to check key released
@@ -818,13 +766,13 @@ static void process_kbd_report(hid_keyboard_report_t const *report)
             if ( find_key_in_report(&prev_report, keycode)) {
                 // ignore for now would like a repeat thing
             } else {
-                keycode_handler(keycode, 0x01);
+                keycode_handler(keycode);
             }
         }
         else {
             keycode = find_release_in_report(&prev_report, i);
             if (keycode > 0x00) {
-                keycode_handler(keycode, 0x00);
+                keycode_handler(keycode += 0x80);
             }
         }
     }
@@ -832,12 +780,9 @@ static void process_kbd_report(hid_keyboard_report_t const *report)
     prev_report = *report;
 }
 
-// send mouse report to usb device CDC
+// process the mouse report and insert into buffers
 static void process_mouse_report(hid_mouse_report_t const * report)
 {
-
-    //------------- button state  -------------//
-    //uint8_t button_changed_mask = report->buttons ^ prev_report.buttons;
     uint8_t temp = mseinstbuf[0] & 0x3F;
     temp |= (report->buttons & MOUSE_BUTTON_LEFT) << 7;
     temp |= (report->buttons & MOUSE_BUTTON_RIGHT) << 5;
@@ -864,12 +809,12 @@ static void process_mouse_report(hid_mouse_report_t const * report)
         }
     } else {
         mseinstbuf[1] += report->x;
-        if (mseinstbuf[1] < 0) mseinstbuf[1] = 0;
-        if (mseinstbuf[1] > 255) mseinstbuf[1] = 255;
+        if (mseinstbuf[1] < 0) { mseinstbuf[1] = 0; }
+        if (mseinstbuf[1] > 255) { mseinstbuf[1] = 255; }
 
         mseinstbuf[2] += report->y;
-        if (mseinstbuf[2] < 0) mseinstbuf[2] = 0;
-        if (mseinstbuf[2] > 255) mseinstbuf[2] = 255;
+        if (mseinstbuf[2] < 0) { mseinstbuf[2] = 0; }
+        if (mseinstbuf[2] > 255) { mseinstbuf[2] = 255; }
     }
 
     new_input_msg = true;

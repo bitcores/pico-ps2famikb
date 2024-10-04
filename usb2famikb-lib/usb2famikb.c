@@ -17,17 +17,17 @@
 
 // we are going to use pio0 for all our stuff
 // pico_pio_usb uses pio1 to the full
-static PIO picofamikb_pio = pio0;
-static uint neskben_sm = 2;
-static uint neskbadv_sm = 1;
-static uint neskbrst_sm = 0;
-static uint nesoe_sm = 3; // could share 1 or 2, at least with one OE
+static const PIO picofamikb_pio = pio0;
+static const uint neskben_sm = 2;
+static const uint neskbadv_sm = 1;
+static const uint neskbrst_sm = 0;
+static const uint nesoe_sm = 3;
 
 // we need the offset for output enable for other things
 static uint nesoeos;
 
 
-void ps2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint kbout_gpio, uint kbmode) {
+void ps2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint kbout_gpio, uint usb2kbmode) {
 
     for (uint8_t i = nesin_gpio; i < nesin_gpio+3; i++) {
         gpio_init(i);
@@ -50,7 +50,7 @@ void ps2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint kb
     pio_sm_set_enabled(picofamikb_pio, neskbrst_sm, true);
 
     // for family basic/subor modes
-    if (kbmode > 0) { // set up the NES input PIO on $4016
+    if (usb2kbmode > 0) { // set up the NES input PIO on $4016
         uint neskbenos = pio_add_program(picofamikb_pio, &nesinen_program);
         pio_sm_config neskbenc = nesinen_program_get_default_config(neskbenos);
 
@@ -73,7 +73,7 @@ void ps2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint kb
         
     }
 
-    if (kbmode < 3) { // set up the NES input PIO on OE from $4017
+    if (usb2kbmode < 3) { // set up the NES input PIO on OE from $4017
         gpio_init(nesoe2_gpio);
         gpio_pull_up(nesoe2_gpio);
 
@@ -112,7 +112,7 @@ void ps2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint kb
 
 }
 
-void ps2famikb_putkb(uint32_t nesout) {
+void ps2famikb_putkb(const uint32_t nesout) {
     // we basically just force the SM to pull this data now, no matter
     // what it is doing, and put it on the output
     // then it returns back to where it was
