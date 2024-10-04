@@ -12,30 +12,43 @@ set(CMAKE_CXX_STANDARD 17)
 
 include(pico_sdk_import.cmake)
 
-project(pico-ps2kb C CXX ASM)
+project(pico-usb2famikb C CXX ASM)
 
 pico_sdk_init()
 
-add_subdirectory(stdinit-lib)
-add_subdirectory(ps2kbd-lib)
-add_subdirectory(ps2famikb-lib)
+add_subdirectory(usb2famikb-lib)
+add_subdirectory(pico-pio-usb)
 
-add_executable(pico-ps2kb pico-ps2kb.c)
+add_executable(pico-usb2famikb)
 
-target_link_libraries(pico-ps2kb PUBLIC
+target_sources(pico-usb2famikb PRIVATE
+    pico-usb2famikb.c
+    ${PICO_TINYUSB_PATH}/src/portable/raspberrypi/pio_usb/dcd_pio_usb.c
+    ${PICO_TINYUSB_PATH}/src/portable/raspberrypi/pio_usb/hcd_pio_usb.c
+)
+
+target_link_libraries(pico-usb2famikb PUBLIC
     pico_i2c_slave
     hardware_i2c
     pico_stdlib
     pico_multicore
-    stdinit-lib
-    ps2kbd-lib
-    ps2famikb-lib
+    usb2famikb-lib
+    
 )
 
-pico_set_binary_type (pico-ps2kb copy_to_ram)
+target_link_libraries(pico-usb2famikb PRIVATE
+    pico_pio_usb
+    tinyusb_host
+)
 
-pico_enable_stdio_uart(pico-ps2kb 0)
-pico_enable_stdio_usb(pico-ps2kb 1)
+# use tinyusb implementation
+target_compile_definitions(pico-usb2famikb PRIVATE PIO_USB_USE_TINYUSB)
+target_include_directories(pico-usb2famikb PRIVATE ${CMAKE_CURRENT_LIST_DIR})
 
-pico_add_extra_outputs(pico-ps2kb)
+target_link_options(pico-usb2famikb PRIVATE -Xlinker --print-memory-usage)
+
+pico_set_binary_type(pico-usb2famikb copy_to_ram)
+
+
+pico_add_extra_outputs(pico-usb2famikb)
 
