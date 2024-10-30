@@ -19,4 +19,4 @@ For the current reference design you will need:
 
 ![](assembled.jpg)
 
-Note: The 330ohm capactior was added because some USB3 hubs seem to draw significant power on startup can could crash the console or Pico, or both. The USB2 hubs I tested don't seem affected, but you can also just plug everything in before you turn on the console to avoid any issues.
+Note: The 330uf capactior was added because some USB3 hubs seem to draw significant power on startup can could crash the console or Pico, or both. The USB2 hubs I tested don't seem affected, but you can also just plug everything in before you turn on the console to avoid any issues.
