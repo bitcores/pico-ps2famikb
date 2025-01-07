@@ -22,6 +22,10 @@
 #include "hardware/pio.h"
 #include "hardware/irq.h"
 
+#ifdef CYW43_WL_GPIO_LED_PIN
+#include "pico/cyw43_arch.h"
+#endif
+
 #include "pio_usb.h"
 #include "tusb.h"
 
@@ -140,6 +144,10 @@ static const uint8_t suborkey[] = {
     KEY_SPACE, KEY_PAUSE, KEY_KP6, KEY_GRAVE,
     KEY_KP0, KEY_KPDOT, KEY_KP3, KEY_F9 
 };
+static const uint8_t modkeys[] = { 
+    KEY_LEFTCTRL, KEY_LEFTSHIFT, KEY_LEFTALT, KEY_LEFTMETA,
+    KEY_RIGHTCTRL, KEY_RIGHTSHIFT, KEY_RIGHTALT, KEY_RIGHTMETA
+};
 
 
 // Just use a 6 byte memory array for storing the latest data for the mouse
@@ -150,9 +158,6 @@ static struct
     bool mem_address_written;
     bool garbage_message;
 } hostmsg;
-
-
-const uint LED_PIN = PICO_DEFAULT_LED_PIN;
 
 static bool new_input_msg;
 // FIFO buffer for keypresses for standard mode
@@ -191,6 +196,34 @@ static uint8_t subormouse[4]; // three byte holder for subor mouse data (one byt
 static uint8_t sbmouseindex = 0;
 static uint8_t sbmouselength = 0; // should be 1 or 3 each report
 static uint32_t horitrack = 0; // output data for horitrack
+
+
+// https://github.com/raspberrypi/pico-examples/blob/master/blink/blink.c
+// Perform initialisation
+int pico_led_init(void) {
+#if defined(PICO_DEFAULT_LED_PIN)
+    // A device like Pico that uses a GPIO for the LED will define PICO_DEFAULT_LED_PIN
+    // so we can use normal GPIO functionality to turn the led on and off
+    gpio_init(PICO_DEFAULT_LED_PIN);
+    gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
+    return PICO_OK;
+#elif defined(CYW43_WL_GPIO_LED_PIN)
+    // For Pico W devices we need to initialise the driver etc
+    return cyw43_arch_init();
+#endif
+}
+
+// Turn the led on or off
+void pico_set_led(bool led_on) {
+#if defined(PICO_DEFAULT_LED_PIN)
+    // Just set the GPIO on or off
+    gpio_put(PICO_DEFAULT_LED_PIN, led_on);
+#elif defined(CYW43_WL_GPIO_LED_PIN)
+    // Ask the wifi "driver" to set the GPIO on or off
+    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, led_on);
+#endif
+}
+// -----------------------------------------------------------
 
 // handle key input into the buffer or matrices
 static void keycode_handler(uint8_t ascii) {
@@ -570,7 +603,7 @@ void nes_handler_thread() {
                 NESinlatch = false;
             }
 
-            uint32_t serialout = 0;
+            uint32_t serialout = 3;
             // push next mouse bit in
             serialout += (~mseword & 0x80000000) >> 27;
             // push the next keyboard bit in
@@ -585,7 +618,7 @@ void nes_handler_thread() {
 int main() {
     // need a clock speed that is a multiple of 12,000
     //set_sys_clock_khz(264000, true);
-    set_sys_clock_khz(264000, true);
+    set_sys_clock_khz(216000, true);
 
     //  configure pico-ps2kb based on gpio
     gpio_init(KB_MODE); gpio_init(KB_MODE+1);
@@ -623,10 +656,9 @@ int main() {
     //  run the NES handler on seperate core
     multicore_launch_core1(nes_handler_thread);
 
-    //  everything should have initialized, turn on LED
-    gpio_init(LED_PIN);
-    gpio_set_dir(LED_PIN, GPIO_OUT);
-    gpio_put(LED_PIN, 1);
+    // turn on LED to show device has booted fine
+    pico_led_init();
+    pico_set_led(true);
 
     if (i2chostmode) {
         gpio_init(I2C_SDA_PIN);
@@ -740,8 +772,7 @@ void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance)
 // look up new key in previous keys
 static inline bool find_key_in_report(hid_keyboard_report_t const *report, uint8_t keycode)
 {
-    for(uint8_t i=0; i<6; i++)
-    {
+    for(uint8_t i=0; i<6; i++) {
         if (report->keycode[i] == keycode)  return true;
     }
 
@@ -761,6 +792,23 @@ static inline void find_releases_in_report(hid_keyboard_report_t const *prev_rep
     }
 }
 
+// check if modifier keys have changed
+static inline void update_modifiers(hid_keyboard_report_t const *prev_report, hid_keyboard_report_t const *report)
+{
+    uint8_t c = 1;
+    for(uint8_t i=0; i<8; i++)
+    {
+        if ((prev_report->modifier & c) != (report->modifier & c)){
+            if ((report->modifier & c) == 0){ // modifier released
+                keycode_handler(modkeys[i] + 0x80);
+            } else {
+                keycode_handler(modkeys[i]);
+            }
+        }
+        c <<= 1;
+    }
+}
+
 // process the kbd report and send to keycode handler
 static void process_kbd_report(hid_keyboard_report_t const *report)
 {
@@ -768,13 +816,15 @@ static void process_kbd_report(hid_keyboard_report_t const *report)
 
     // keycode positions change when released, so need to check all
     find_releases_in_report(&prev_report, report);
+    // check if modifier keys have changed
+    update_modifiers(&prev_report, report);
 
     for(uint8_t i=0; i<6; i++)
     {
         uint8_t keycode = report->keycode[i];
         if ( keycode )
         {
-            if ( find_key_in_report(&prev_report, keycode)) {
+            if (find_key_in_report(&prev_report, keycode)) {
                 // ignore for now would like a repeat thing
             } else {
                 keycode_handler(keycode);
