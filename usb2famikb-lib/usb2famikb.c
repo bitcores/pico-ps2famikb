@@ -45,6 +45,7 @@ void usb2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint k
     pio_sm_set_consecutive_pindirs(picofamikb_pio, neskbrst_sm, nesin_gpio, 1, false);
     sm_config_set_in_pins(&neskbrstc, nesin_gpio);
     sm_config_set_in_shift(&neskbrstc, false, false, 32);
+    sm_config_set_jmp_pin(&neskbrstc, nesin_gpio);
 
     pio_sm_init(picofamikb_pio, neskbrst_sm, neskbrstos, &neskbrstc);
     pio_sm_set_enabled(picofamikb_pio, neskbrst_sm, true);
@@ -57,7 +58,8 @@ void usb2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint k
         pio_sm_set_consecutive_pindirs(picofamikb_pio, neskben_sm, nesin_gpio+2, 1, false);
         sm_config_set_in_pins(&neskbenc, nesin_gpio+2);
         sm_config_set_in_shift(&neskbenc, false, false, 32);
-
+        sm_config_set_jmp_pin(&neskbenc, nesin_gpio+2);
+        
         pio_sm_init(picofamikb_pio, neskben_sm, neskbenos, &neskbenc);
         pio_sm_set_enabled(picofamikb_pio, neskben_sm, true);
 
@@ -67,6 +69,7 @@ void usb2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint k
         pio_sm_set_consecutive_pindirs(picofamikb_pio, neskbadv_sm, nesin_gpio+1, 1, false);
         sm_config_set_in_pins(&neskbadvc, nesin_gpio+1);
         sm_config_set_in_shift(&neskbadvc, false, false, 32);
+        sm_config_set_jmp_pin(&neskbadvc, nesin_gpio+1);
 
         pio_sm_init(picofamikb_pio, neskbadv_sm, neskbadvos, &neskbadvc);
         pio_sm_set_enabled(picofamikb_pio, neskbadv_sm, true);
@@ -83,6 +86,7 @@ void usb2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint k
         pio_sm_set_consecutive_pindirs(picofamikb_pio, nesoe_sm, nesoe2_gpio, 1, false);
         sm_config_set_in_pins(&nesoec, nesoe2_gpio);
         sm_config_set_in_shift(&nesoec, false, false, 32);
+        sm_config_set_jmp_pin(&nesoec, nesoe2_gpio);
 
         pio_sm_set_consecutive_pindirs(picofamikb_pio, nesoe_sm, kbout_gpio, 5, true);
         sm_config_set_out_pins(&nesoec, kbout_gpio, 5);
@@ -101,6 +105,7 @@ void usb2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint k
         pio_sm_set_consecutive_pindirs(picofamikb_pio, nesoe_sm, nesoe1_gpio, 1, false);
         sm_config_set_in_pins(&nesoec, nesoe1_gpio);
         sm_config_set_in_shift(&nesoec, false, false, 32);
+        sm_config_set_jmp_pin(&nesoec, nesoe1_gpio);
 
         pio_sm_set_consecutive_pindirs(picofamikb_pio, nesoe_sm, kbout_gpio, 5, true);
         sm_config_set_out_pins(&nesoec, kbout_gpio, 5);
