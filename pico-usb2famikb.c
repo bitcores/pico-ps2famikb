@@ -98,9 +98,9 @@ static bool keymatrix[] = {
 };
 static const uint8_t famikey[] = {
     KEY_RIGHTBRACE, KEY_LEFTBRACE, KEY_ENTER, KEY_F8, 
-    KEY_END, KEY_YEN, KEY_RIGHTSHIFT, KEY_KATAKANAHIRAGANA,
-    KEY_SEMICOLON, KEY_APOSTROPHE, KEY_GRAVE, KEY_F7, // APOSTROPHE maps to COLON
-    KEY_GRAVE, KEY_MINUS, KEY_SLASH, KEY_BACKSLASH,
+    KEY_F12, KEY_BACKSLASH, KEY_RIGHTSHIFT, KEY_RIGHTALT,
+    KEY_SEMICOLON, KEY_APOSTROPHE, KEY_DELETE, KEY_F7, // APOSTROPHE maps to COLON
+    KEY_EQUAL, KEY_MINUS, KEY_SLASH, KEY_RIGHTCTRL,
     KEY_K, KEY_L, KEY_O, KEY_F6,
     KEY_0, KEY_P, KEY_COMMA, KEY_DOT,
     KEY_J, KEY_U, KEY_I, KEY_F5,
@@ -112,7 +112,7 @@ static const uint8_t famikey[] = {
     KEY_A, KEY_S, KEY_W, KEY_F2,
     KEY_3, KEY_E, KEY_Z, KEY_X,
     KEY_LEFTCTRL, KEY_Q, KEY_ESC, KEY_F1,
-    KEY_2, KEY_1, KEY_TAB, KEY_LEFTSHIFT,
+    KEY_2, KEY_1, KEY_LEFTALT, KEY_LEFTSHIFT,
     KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_HOME,
     KEY_INSERT, KEY_BACKSPACE, KEY_SPACE, KEY_DOWN
 };
@@ -536,8 +536,8 @@ void nes_handler_thread() {
                 }
             }
 
-            //  set current output value on $4017
-            output = 0; //  if keyboard is not enabled return 0
+            // set current output value on $4017
+            output = 0x1E;  //  if keyboard is not enabled return 1s (console 0s)
             if (enable > 0) {
                 for (int i = (4 * select); i < (4 * select)+4; i++) {
                     output += keymatrix[i];

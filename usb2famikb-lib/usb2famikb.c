@@ -31,7 +31,6 @@ void usb2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint k
 
     for (uint8_t i = nesin_gpio; i < nesin_gpio+3; i++) {
         gpio_init(i);
-        gpio_pull_up(i);
     }
 
     for (uint8_t i = kbout_gpio; i < kbout_gpio+5; i++) {
@@ -78,7 +77,6 @@ void usb2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint k
 
     if (usb2kbmode < 3) { // set up the NES input PIO on OE from $4017
         gpio_init(nesoe2_gpio);
-        gpio_pull_up(nesoe2_gpio);
 
         nesoeos = pio_add_program(picofamikb_pio, &nesoe_program);
         pio_sm_config nesoec = nesoe_program_get_default_config(nesoeos);
@@ -97,7 +95,6 @@ void usb2famikb_init(uint nesin_gpio, uint nesoe1_gpio, uint nesoe2_gpio, uint k
 
     } else { // set up the NES input PIO on OE from $4016
         gpio_init(nesoe1_gpio);
-        gpio_pull_up(nesoe1_gpio);
 
         nesoeos = pio_add_program(picofamikb_pio, &nesoe_program);
         pio_sm_config nesoec = nesoe_program_get_default_config(nesoeos);
